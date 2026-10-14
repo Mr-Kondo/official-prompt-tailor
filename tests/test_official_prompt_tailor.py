@@ -911,6 +911,15 @@ class TestFilesAndStructure(Base):
         self.assertEqual(cm.exception.code, 2)
         self.assertEqual(self.cli("verify", "--run", "outputs/none", "--mode", "live")[0], 2)
 
+    def test_out_directory_outside_the_workspace_is_refused(self):
+        outside = Path(tempfile.mkdtemp()).resolve()
+        self.addCleanup(shutil.rmtree, outside, True)
+        self.make_input("run-o")
+        code, out, err = self.cli("fetch", "--input", "input-run-o.json", "--out", str(outside / "run-o"), "--mode", "live")
+        self.assertEqual((code, out), (1, ""))
+        self.assertIn("inside the workspace", err)
+        self.assertFalse((outside / "run-o").exists())
+
 
 # =========================================================== semantic review (assess)
 class AssessBase(Base):

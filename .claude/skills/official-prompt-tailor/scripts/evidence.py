@@ -653,7 +653,8 @@ def do_fetch(input_path, out, mode, cache=None):
     safe_id(out.name, "run id")
     if ".." in out.parts:
         raise ContractError("--out must not contain '..'")
-    if not out.parent.resolve().is_relative_to(Path.cwd().resolve()):
+    # Python 3.9 on Windows returns a relative path that does not exist yet unresolved: make it absolute first.
+    if not (Path.cwd() / out.parent).resolve().is_relative_to(Path.cwd().resolve()):
         raise ContractError("--out must be inside the workspace")
     if mode == "cache":
         if not cache:
