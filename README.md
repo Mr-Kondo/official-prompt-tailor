@@ -83,7 +83,7 @@ python3 install.py --uninstall --project <プロジェクト>            # 削�
 
 ## 使い方
 
-Claude Code で `/official-prompt-tailor` を呼ぶか、「このプロンプトを Claude Code 向けに公式資料に沿って最適化して」と頼みます。手動で流す手順、cache の例、`INCOMPLETE` の例は [docs/usage.md](docs/usage.md) にあります。
+Claude Code で `/official-prompt-tailor` を呼ぶか、「このプロンプトを Claude Code 向けに公式資料に沿って最適化して」と頼みます。手動で流す手順、cache の例、`INCOMPLETE` の例は [docs/usage.md](docs/usage.md) にあります。利用先ごとの取得資料・使える規則と、`purpose` / `target_surface` / `model_id` の決め方は [docs/targets.md](docs/targets.md) にあります。
 
 ## 何を保証するか
 
@@ -91,7 +91,7 @@ Claude Code で `/official-prompt-tailor` を呼ぶか、「このプロンプ�
 
 ## メンテナンスと審査
 
-公式資料は変わります。規則の再確認方法、意味審査、効果測定の手順は [docs/maintenance.md](docs/maintenance.md) にあります。
+公式資料は変わります。規則の再確認方法、資料の更新・追加の取り込み方、意味審査、効果測定の手順は [docs/maintenance.md](docs/maintenance.md) にあります。
 
 ## テスト
 
