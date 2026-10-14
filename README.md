@@ -9,10 +9,12 @@
 ```text
 .claude/skills/official-prompt-tailor/
   SKILL.md                       入口・手順・表示規則
-  references/registry.json       資料(20)・対象(11)・審査済み規則(34)
+  references/registry.json       資料(19)・対象(11)・審査済み規則(34)
   references/evidence-contract.md / review-rubric.md
-  scripts/evidence.py            fetch / verify / assess / compare(標準ライブラリのみ)
-tests/test_official_prompt_tailor.py   evals/prompt-tailor-cases.jsonl   outputs/(Git 管理外)
+  scripts/evidence.py            fetch / verify / assess / compare / drift(標準ライブラリのみ)
+tools/maintain.py                保守用(スキルには同梱しない): discover / propose
+.github/workflows/               test(Python 3.9〜3.14)・watch(週次の drift と discover)・release
+tests/   evals/prompt-tailor-cases.jsonl   outputs/(Git 管理外)
 ```
 
 ## インストール
@@ -79,6 +81,8 @@ python3 install.py --uninstall --project <プロジェクト>            # 削�
 
 `fetch` の終了コードは、0 が「必須資料の取得・本文検査に成功」、1 が「契約違反」、2 が「blocked / missing / stale / target 未解決」です。**`fetch` の 0 は、検証済みではありません。** 引数の誤りは、argparse の 2 です。
 
+`drift` は、この 3 つとは別の、資料の更新確認です。規則の審査後に資料の本文が変わったかを、ハッシュと引用の有無で調べます。終了コードは、`CURRENT` → 0、`DRIFT` / `INCOMPLETE` → 2、契約違反 → 1 です。
+
 推奨を採用するには、「参照検証 PASS」と「意味審査 PASS」の両方が必要です。「改善を実測済み」と書けるのは、その対象の `IMPROVED_ON_TEST_SET` があるときだけです。これは、一般的な性能向上や統計的な確証を意味しません。
 
 ## 使い方
@@ -91,12 +95,12 @@ Claude Code で `/official-prompt-tailor` を呼ぶか、「このプロンプ�
 
 ## メンテナンスと審査
 
-公式資料は変わります。規則の再確認方法、資料の更新・追加の取り込み方、意味審査、効果測定の手順は [docs/maintenance.md](docs/maintenance.md) にあります。
+公式資料は変わります。更新の確認(`drift`)と新規ページの発見(`tools/maintain.py discover`)は、毎週 GitHub Actions でも実行されます。規則の再確認方法、資料の追加方法、意味審査、効果測定、リリースの手順は [docs/maintenance.md](docs/maintenance.md) にあります。
 
 ## テスト
 
 ```bash
-python3 -m unittest discover -s tests -p 'test_official_prompt_tailor.py'
+python3 -m unittest discover -s tests
 ```
 
 ネットワークは mock、fixture は合成データです。通ることが示すのは、「検査コードが想定どおり動く」ことだけです。本番の公式取得・独立ログ・認知的な読了・実際の skill 発火・対象製品での効果を確認したことには、なりません。

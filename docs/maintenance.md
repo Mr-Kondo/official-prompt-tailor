@@ -21,40 +21,73 @@
 
 ## 資料の更新と追加を取り込む
 
-現状は、更新の検知も、資料と規則の追加も、手作業です。本文の更新を知らせる仕組みは、`verify` の `rereview_pending` だけです。これは、その run が引用した規則の `source_body_sha256` と、今回取得した本文のハッシュを比べた結果です。引用されなかった規則と、取得しなかった資料の更新は、どこにも出ません。
+更新の確認と、新しいページの発見は、自動化されています(毎週の GitHub Actions でも動きます)。資料と規則の追加、規則の審査は手作業です。自動化は、人が見るべきものを挙げるだけで、registry を書き換えません。
 
 ### 更新を確かめる
 
-1. 確かめたい利用先の `input.json` で、`fetch --mode live` を実行します。取得されるのは、その入力で選ばれる資料だけです([targets.md](targets.md))。
-2. 取得した本文のハッシュと、規則に記録したハッシュを比べます。`<run-id>` は、手順 1 の run の ID に置き換えます。
+`drift` は、資料の本文が、規則の審査後に変わったかを調べます。比べるのはハッシュと引用の有無だけで、変更が意味を変えたかは判定しません。
 
 ```bash
-python3 -I - <<'PY'
-import json
-run = "outputs/official-prompt-tailor/<run-id>"
-reg = json.load(open(".claude/skills/official-prompt-tailor/references/registry.json", encoding="utf-8"))
-acq = json.load(open(f"{run}/acquisition.json", encoding="utf-8"))
-body = {e["source_id"]: open(f"{run}/{e['body_path']}", encoding="utf-8").read() for e in acq["sources"] if e["body_path"]}
-hashes = {e["source_id"]: e["body_sha256"] for e in acq["sources"] if e["body_sha256"]}
-for r in reg["rules"]:
-    sid = r["source_id"]
-    if sid in hashes and r["review_status"] == "reviewed" and r["source_body_sha256"] != hashes[sid]:
-        kept = r["source_excerpt"] in body[sid]
-        print("要再審査:", r["rule_id"], "引用は本文に残っている" if kept else "引用が本文から消えた")
-print("比較した資料:", ", ".join(hashes) or "なし")
-PY
+python3 .claude/skills/official-prompt-tailor/scripts/evidence.py drift
 ```
 
-3. `要再審査` の規則は、「規則・資料の再確認方法」の手順 2 以降で再審査します。`引用が本文から消えた` 規則を、先に見てください。
+- 引数なしだと、登録されたすべての資料を取得して、規則に記録したハッシュと比べます(通信します)。`--source <source_id>` で、資料を絞れます。
+- `--run <run>` は、その run の `acquisition.json` と `snapshots/` を使います(通信しません)。`fetch` のあと、規則を選ぶ前に実行します。
+- 引数なしでは、`changed`・`excerpt_missing` になった資料と、取得できなかった資料を、2 秒待って 1 回だけ取得し直し、2 回目の結果を採ります。配信の切り替え中の一時的な差異や、通信エラーを、報告しないためです。
 
-`blocked` の資料は、比べられません。原因は `acquisition.json` の `error` にあります。更新の有無は、人がブラウザなどで確かめます。
+規則ごとの `state` は、次のとおりです。
+
+| state | 意味 | 対応 |
+|---|---|---|
+| `current` | 本文のハッシュが、審査時と同じ | なし |
+| `changed` | ハッシュが違い、引用は本文に残っている | 変更箇所を読み、再審査する |
+| `excerpt_missing` | 引用が本文から消えた | 先に再審査する |
+| `unreviewed` | 未審査の規則 | 審査する |
+| `unverifiable` | 資料を取得できなかった | `error` を見て、再実行するか、人がブラウザで確かめる |
+
+`verdict` は、`changed` か `excerpt_missing` があれば `DRIFT` です。なければ、取得できない資料があるとき `INCOMPLETE`、それ以外は `CURRENT` です。終了コードは、`CURRENT` が 0、`DRIFT` と `INCOMPLETE` が 2、契約違反(`--run` の本文がハッシュと合わないなど)が 1 です。
+
+`changed` と `excerpt_missing` の規則は、「規則・資料の再確認方法」の手順 2 以降で再審査します。
+
+「Updated 3 days ago」のような相対時刻の行は、本文から除かれます。記事が更新されなくても、毎日変わるためです。「Last updated: …」のような絶対日付は、ページが更新されたときだけ変わるので、本文に残ります。
+
+### 新しい資料を見つける
+
+`tools/maintain.py discover` は、各公式サイトの `llms.txt`(ページの一覧)を読みます。キーワードに合い、まだ登録も既読にもしていないページを挙げます。スキルには同梱しない、保守用のツールです。
+
+```bash
+python3 tools/maintain.py discover
+```
+
+- 一覧とキーワードは `tools/discovery.json` にあります。一覧ごとのキーは、`index_id`、`url`(`llms.txt` の URL)、`scope`(見るパスの先頭)です。`keywords` と `exclude`(正規表現)は任意で、絞り込みに使います。
+- `www.`、`.md`、`/index`、末尾の `/`、クエリ、http と https の違いは、同じページとして扱います。他のホストへのリンクは数えません。
+- 見送るページは、`--mark-seen` で既読にして、`tools/discovery-seen.json` をコミットします。採用するページは、先に登録するか、次の「登録案を作る」へ進みます。
+- `verdict` は、`CANDIDATES`(候補あり)、`INCOMPLETE`(取得できない一覧がある)、`NONE` のいずれかです。終了コードは、`NONE` が 0、それ以外が 2 です。
+
+`llms.txt` がないサイトは、対象外です。手で確かめてください。
+
+### 登録案を作る
+
+`propose` は、候補の URL を取得して、`sources` に足せる形に変えます。
+
+```bash
+python3 tools/maintain.py propose --url https://code.claude.com/docs/en/memory.md --target claude-code
+```
+
+- `extraction` は、HTML 系の 3 種と `markdown-v1` を順に試して、最初に通るものを選びます。
+- `body_locators` は、本文の見出しから 2 件を選びます。選んだ組で、`fetch` や `verify` と同じ検査を通します。
+- 2 回取得して、本文のハッシュが同じかも確かめます(`stable`)。違うと終了コード 2 です。時刻や乱数のような、毎回変わる語が本文に入っています。
+- `--source-id`(省略すると URL から作ります)、`--surface`(繰り返せます)、`--category` を指定できます。
+- 取得できるのは、registry か `tools/discovery.json` に既にあるホストの、https のページだけです。登録済みのページや、未知の `--target` は、契約違反(終了コード 1)です。
+
+出力の `source` を、`sources` に貼ります。`targets` への配線、`rules` の追加、審査は、次の「新しい資料を足す」の手順 3 以降です。
 
 ### 新しい資料を足す
 
 新しい公式ページ(新しい製品やモデルのガイドなど)を使えるようにする手順です。`references/registry.json` を編集します。
 
 1. 公式のドメインにあり、https で、ログインなしに読めるページか確かめます。
-2. `sources` に、次のキーで追加します。すべて必須で、未知のキーは拒否されます。
+2. `sources` に追加します。「登録案を作る」の `source` を貼るか、次のキーで書きます。すべて必須で、未知のキーは拒否されます。
    - `source_id`: 英数字・`.`・`_`・`-` で、64 文字以内。
    - `allowed_urls`: https の URL。ホスト・パス・クエリが完全一致で照合され、`#` は使えません。`fetch` は先頭の URL から取得し、リダイレクト先は、いずれかの URL と一致するときだけ許可されます。
    - `target_ids`・`surfaces`・`models`: 資料が当てはまる範囲。限定しないときは `["all"]`。
@@ -68,7 +101,7 @@ PY
 3. `targets` の `required_sources` か `conditional_sources` に、`source_id` を加えます。`required_sources` は常に取得され、`conditional_sources` は `purposes` と `surfaces` が合うときだけ取得されます。
 4. `fetch` で取得します。`blocked` にならないこと、`snapshots/<id>/body.txt` が本文だけになっていることを確かめます。
 5. `rules` に規則を足します。既存の規則をひな形にし、全キーを埋めます。
-   - 最初は `review_status` を `unreviewed` にし、`source_body_sha256`・`reviewed_at`・`reviewer_id` を `null` にします。
+   - 最初は `review_status` を `unreviewed` にします。`source_body_sha256`・`reviewed_at`・`reviewer_id` は `null` です。
    - `source_excerpt` は、本文にそのまま現れる短い引用にします。
    - 本文と照合して審査したら、`"reviewed"` に変えて、3 項目を埋めます。`source_body_sha256` は、手順 4 の `acquisition.json` の `body_sha256` です。
    - `unreviewed` の規則を根拠に引用すると、`verify` は `FAIL` です。
@@ -78,6 +111,16 @@ PY
 ### 新しい利用先を足す
 
 利用先(`target_id`)の追加は、registry だけでは済みません。`evidence.py` の `TARGET_IDS` にも足します。registry は、`TARGET_IDS` のすべてを `targets` に定義する決まりだからです。SKILL.md の対象の表、README、[targets.md](targets.md) も更新します。
+
+### 自動実行(GitHub Actions)
+
+`.github/workflows/watch.yml` が、毎週月曜の 03:17(UTC)に `drift` と `discover` を実行します。Actions の画面から、手動でも実行できます。
+
+- 人の判断が要る結果(`drift` の `DRIFT`、`discover` の `CANDIDATES`)だけが、`drift` または `discover` のラベルを付けた Issue になります。開いている Issue があれば、本文を最新の報告に置き換えます。
+- `INCOMPLETE`(取得できない資料や一覧がある)は、実行の Summary に出るだけで、Issue にはなりません。通信エラーは、再実行で解消することがあります。
+- 再審査(または既読化)が済んだら、Issue を閉じます。次の週に残っていれば、Issue は開き直されます。
+
+`.github/workflows/test.yml` は、push と pull request で、Ubuntu は Python 3.9〜3.14、macOS と Windows は 3.9 と 3.14 のテストを実行します。Windows のジョブは、失敗しても workflow の失敗にしません。README は Windows 対応をうたっていますが、まだ一度も確かめていないためです。
 
 ## 意味審査
 
@@ -103,3 +146,16 @@ PY
 事例の `status` は `pending-review` で配布しています。要件の抽出を、人がまだ確認していないためです。確認して `ready` にするまで、`compare` は `INCOMPLETE` を返します。
 
 実行回数は、事例数 × 2 案 × 反復数です。たとえば、10 事例・各 3 回なら、1 対象で 60 回です。採点の呼出しは別です。
+
+## リリース
+
+1. 変更をコミットします。
+2. `install.py` の `PLUGIN_VERSION` を上げ、`release-notes/vX.Y.Z.md` にリリースノートを書いて、コミットします。ノートは「変更点」「確認できていること」「確認できていないこと」の 3 節です。
+3. タグ `vX.Y.Z` を付けて、`main` とタグを push します。
+4. `.github/workflows/release.yml` が、タグと `PLUGIN_VERSION` の一致を確かめ、テストを通し、`install.py --zip` で ZIP を作って、GitHub Release を公開します。ノートは、タグの `release-notes/vX.Y.Z.md` です。無ければ自動生成になります。
+
+手元から公開するときは、`install.py --zip dist` で ZIP を作り、次を実行します。
+
+```bash
+gh release create vX.Y.Z dist/official-prompt-tailor.zip --title vX.Y.Z --notes-file release-notes/vX.Y.Z.md
+```
