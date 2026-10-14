@@ -711,7 +711,10 @@ class TestRouting(unittest.TestCase):
         self.assertEqual(len(flat), len(set(flat)))
 
     def test_registry_is_internally_consistent_and_rules_are_reviewed(self):
-        self.assertEqual(len({s["source_id"] for s in self.reg["sources"]}), 20)
+        sources = {s["source_id"] for s in self.reg["sources"]}
+        self.assertEqual(len(sources), 19)
+        routed = {i for t in self.reg["targets"] for i in t["required_sources"] + [x for c in t["conditional_sources"] for x in c["source_ids"]]}
+        self.assertEqual((sources - routed, sources - {r["source_id"] for r in self.reg["rules"]}), (set(), set()))  # no dead source
         for r in self.reg["rules"]:
             with self.subTest(r["rule_id"]):
                 self.assertEqual(r["review_status"], "reviewed")
@@ -1389,6 +1392,113 @@ class TestCompare(CompareBase):
         self.assertEqual((code, e["status"]), (2, "INCOMPLETE"))
 
 
+# =========================================================== drift
+class TestDrift(Base):
+    def setUp(self):
+        super().setUp()
+        patch = mock.patch.object(ev, "RETRY_WAIT", 0)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    @staticmethod
+    def answers(*replies):
+        """A source that gives these replies in turn and then keeps giving the last one."""
+        queue = list(replies)
+        return lambda: queue.pop(0) if len(queue) > 1 else queue[0]
+
+    def drift(self, *argv):
+        code, out, err = self.cli("drift", *argv)
+        return code, json.loads(out), err
+
+    @staticmethod
+    def states(rep):
+        return {r["rule_id"]: r["state"] for r in rep["rules"]}
+
+    def test_live_is_current_when_nothing_changed(self):
+        code, rep, err = self.drift()
+        self.assertEqual((code, rep["verdict"], rep["mode"]), (0, "CURRENT", "live"))
+        self.assertIn("CURRENT", err)
+        st = self.states(rep)
+        self.assertEqual((st["rule-verify"], st["rule-unreviewed"]), ("current", "unreviewed"))
+        self.assertEqual([s["source_id"] for s in rep["sources"]], ["doc-a", "doc-md", "doc-api"])
+
+    def test_changed_body_and_lost_excerpt_are_told_apart(self):
+        self.responses[A_URL] = (200, HTML, self.page.replace(b"Give a check it can run", b"Give a check it can run now"))
+        code, rep, err = self.drift()
+        st = self.states(rep)
+        self.assertEqual((code, rep["verdict"]), (2, "DRIFT"))
+        self.assertEqual((st["rule-verify"], st["rule-model"], st["rule-api"]), ("changed", "changed", "current"))
+        self.assertIn("rule-verify", err)
+        self.responses[A_URL] = (200, HTML, self.page.replace(b"Give a check it can run", b"Skip every check you can run"))
+        st = self.states(self.drift()[1])
+        self.assertEqual((st["rule-verify"], st["rule-model"]), ("excerpt_missing", "changed"))
+
+    def test_blocked_source_is_incomplete_but_drift_still_wins(self):
+        self.responses[A_URL] = (503, HTML, b"")
+        code, rep, _ = self.drift()
+        a = next(s for s in rep["sources"] if s["source_id"] == "doc-a")
+        self.assertEqual((code, rep["verdict"], a["status"], a["error"]), (2, "INCOMPLETE", "blocked", "http_503"))
+        self.assertEqual(self.states(rep)["rule-verify"], "unverifiable")
+        self.responses[API_URL] = (200, HTML, self.page.replace(b"Give a check it can run", b"Give a check it can run now"))
+        self.assertEqual(self.drift()[1]["verdict"], "DRIFT")
+
+    def test_source_filter_limits_the_report_and_an_unknown_source_is_refused(self):
+        code, rep, _ = self.drift("--source", "doc-md")
+        self.assertEqual(([s["source_id"] for s in rep["sources"]], rep["rules"]), (["doc-md"], []))
+        code, out, err = self.cli("drift", "--source", "nope")
+        self.assertEqual((code, out), (1, ""))
+        self.assertIn("unknown source", err)
+
+    def test_run_mode_reads_the_snapshot_without_network(self):
+        self.fetch()
+        self.calls.clear()
+        code, rep, _ = self.drift("--run", str(self.run_dir()))
+        self.assertEqual((code, rep["verdict"], rep["mode"], self.calls), (0, "CURRENT", "run", []))
+        self.set_registry(lambda r: [x.update({"source_body_sha256": "2" * 64}) for x in r["rules"] if x["rule_id"] == "rule-verify"])
+        code, rep, _ = self.drift("--run", str(self.run_dir()))
+        self.assertEqual((code, self.states(rep)["rule-verify"]), (2, "changed"))
+
+    def test_run_mode_trusts_a_cache_run_but_not_a_stale_one(self):
+        self.fetch("run-1")
+        self.clock.advance(hours=2)
+        self.fetch("run-2", "cache", self.run_dir("run-1"))
+        code, rep, _ = self.drift("--run", str(self.run_dir("run-2")))
+        self.assertEqual((code, rep["sources"][0]["status"]), (0, "cache"))
+        self.clock.advance(days=8)
+        self.fetch("run-3", "cache", self.run_dir("run-1"))
+        code, rep, _ = self.drift("--run", str(self.run_dir("run-3")))
+        self.assertEqual((code, rep["verdict"], rep["sources"][0]["status"]), (2, "INCOMPLETE", "stale"))
+
+    def test_run_mode_rejects_a_tampered_snapshot(self):
+        self.fetch()
+        p = self.run_dir() / "snapshots" / "doc-a" / "body.txt"
+        p.write_text(p.read_text(encoding="utf-8") + "x\n", encoding="utf-8")
+        code, out, err = self.cli("drift", "--run", str(self.run_dir()))
+        self.assertEqual((code, out), (1, ""))
+        self.assertIn("SHA-256", err)
+
+    def test_run_mode_treats_a_blocked_entry_as_unverifiable(self):
+        self.responses[A_URL] = (503, HTML, b"")
+        self.assertEqual(self.fetch()[0], 2)
+        code, rep, _ = self.drift("--run", str(self.run_dir()))
+        self.assertEqual((code, rep["verdict"], self.states(rep)["rule-verify"]), (2, "INCOMPLETE", "unverifiable"))
+
+    def test_a_difference_that_is_gone_on_the_second_look_is_not_reported(self):
+        changed = (200, HTML, self.page.replace(b"Give a check it can run", b"Give a check it can run now"))
+        self.responses[A_URL] = self.answers(changed, (200, HTML, self.page))
+        code, rep, _ = self.drift()
+        self.assertEqual((code, rep["verdict"], self.calls.count(A_URL)), (0, "CURRENT", 2))
+
+    def test_a_block_that_is_gone_on_the_second_look_is_not_reported(self):
+        self.responses[A_URL] = self.answers((503, HTML, b""), (200, HTML, self.page))
+        self.assertEqual(self.drift()[1]["verdict"], "CURRENT")
+
+    def test_only_the_source_that_looks_wrong_is_fetched_again(self):
+        self.responses[A_URL] = (200, HTML, self.page.replace(b"Give a check it can run", b"Give a check it can run now"))
+        self.assertEqual(self.drift()[1]["verdict"], "DRIFT")
+        self.assertEqual([self.calls.count(u) for u in (A_URL, MD_URL, API_URL)], [2, 1, 1])
+
+
 class TestShippedEvals(unittest.TestCase):
     def test_shipped_cases_are_well_formed_split_and_not_claimed_reviewed(self):
         rows = ev.load_jsonl(ROOT / "evals" / "prompt-tailor-cases.jsonl")
@@ -1710,6 +1820,16 @@ class TestExtraction(unittest.TestCase):
         for listed in (["unknown"], ["api"], ["gems", "unknown"]):
             self.assertFalse(ev.in_list(listed, "unknown"), listed)
         self.assertTrue(ev.in_list(["api", "gems"], "gems"))
+
+    def test_relative_update_labels_are_dropped_but_absolute_dates_stay(self):
+        src = {"extraction": "html-main-v1", "body_locators": ["Best practices", "Provide context"]}
+        page = (FIX / "guide.html").read_bytes()
+        plain = ev.process_body(src, page, "text/html")
+        for label in (b"Updated 3 days ago", b"Updated today", b"Updated over a week ago", b"updated yesterday"):
+            self.assertEqual(plain, ev.process_body(src, page.replace(b"<main>", b"<main><p>" + label + b"</p>"), "text/html"), label)
+        for kept in (b"Last updated: Jun 18, 2026", b"Updated user model to handle edge cases", b"Updated 3 days ago, see below"):
+            body = ev.process_body(src, page.replace(b"<main>", b"<main><p>" + kept + b"</p>"), "text/html")
+            self.assertIn(kept.decode(), body)
 
     def test_extraction_is_deterministic(self):
         src = {"extraction": "html-main-v1", "body_locators": ["Best practices", "Provide context"]}

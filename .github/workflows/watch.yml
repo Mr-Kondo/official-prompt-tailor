@@ -1,0 +1,45 @@
+name: watch
+
+# Weekly: have the registered official pages changed since their rules were reviewed (drift), and are there
+# pages worth a look that are not registered yet (discover)? Each result goes to one issue, labelled
+# "drift" / "discover", only when a person has to act. docs/maintenance.md explains the follow-up.
+on:
+  schedule:
+    - cron: "17 3 * * 1"  # Mondays 03:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # Exit 2 is DRIFT or INCOMPLETE (the report says which). Any other failure is a broken setup and fails the job.
+      - shell: bash
+        run: python3 -I .claude/skills/official-prompt-tailor/scripts/evidence.py drift > result.json || [ "$?" -eq 2 ]
+      - shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -I .github/scripts/ci_report.py drift result.json --issue | tee -a "$GITHUB_STEP_SUMMARY"
+
+  discover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - shell: bash
+        run: python3 -I tools/maintain.py discover > result.json || [ "$?" -eq 2 ]
+      - shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -I .github/scripts/ci_report.py discover result.json --issue | tee -a "$GITHUB_STEP_SUMMARY"

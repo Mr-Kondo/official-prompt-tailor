@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "keywords": ["prompt", "instruction", "memory", "rules", "skill", "agents.md", "system prompt", "best practice", "persona", "gems", "guideline"],
+  "indexes": [
+    {"index_id": "claude-code-docs", "url": "https://code.claude.com/llms.txt", "scope": ["/docs/en/"], "exclude": ["cach", "sdk"]},
+    {"index_id": "claude-platform-docs", "url": "https://platform.claude.com/llms.txt", "scope": ["/docs/en/build-with-claude/prompt-engineering/", "/docs/en/agents-and-tools/agent-skills/"]},
+    {"index_id": "claude-support", "url": "https://support.claude.com/llms.txt", "scope": ["/en/articles/"], "keywords": ["prompt", "cowork"]},
+    {"index_id": "chatgpt-learn", "url": "https://learn.chatgpt.com/docs/llms.txt", "scope": ["/docs/", "/guides/"]},
+    {"index_id": "gemini-cli-docs", "url": "https://geminicli.com/llms.txt", "scope": ["/docs/"]},
+    {"index_id": "adk-docs", "url": "https://adk.dev/llms.txt", "scope": ["/agents/", "/skills/"]},
+    {"index_id": "antigravity-docs", "url": "https://antigravity.google/llms.txt", "scope": ["/docs/"]}
+  ]
+}

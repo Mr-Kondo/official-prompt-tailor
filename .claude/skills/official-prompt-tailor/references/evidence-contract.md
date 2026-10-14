@@ -35,6 +35,20 @@ verification.json  semantic-review.json  semantic-verification.json  evaluation.
 - `stale`: 取得から 7 日超(ローカル方針。ベンダー規則ではない)。未来日時は契約違反。
 - 外部ツール(`method=external-tool`)で得た本文は `cache`・`origin_status=unobserved` として扱い、`PASS` にしない。
 
+## drift
+
+`drift [--run RUN] [--source ID]...` は、資料の本文が規則の審査後に変わったかを、ハッシュと引用の有無だけで調べる。意味の変化は判定しない。`--run` は、その run の `acquisition.json` と `snapshots/` を使う(通信しない)。指定しなければ、登録された全資料を取得する。
+
+出力 JSON: `mode`(`live` / `run`)、`verdict`、`sources`(`source_id` `status` `error` `body_sha256`)、`rules`(`rule_id` `source_id` `state`)。
+
+`state`: `current`(ハッシュが審査時と同じ)/ `changed`(ハッシュが違い、引用は残る)/ `excerpt_missing`(引用が本文から消えた)/ `unreviewed` / `unverifiable`(資料を取得できなかった)。
+
+`verdict`: `DRIFT`(`changed` か `excerpt_missing` がある)/ `INCOMPLETE`(取得できない資料がある)/ `CURRENT`。終了コードは `CURRENT` が 0、`DRIFT` と `INCOMPLETE` が 2、契約違反(`--run` の本文がハッシュと合わない、未知の `--source`)が 1。
+
+`--run` なしでは、`changed` / `excerpt_missing` になった資料と取得できなかった資料を、2 秒待って 1 回だけ取得し直し、2 回目の観測を採る(一時的な差異や通信エラーを報告しないため)。
+
+HTML の本文から、相対時刻の行(`Updated today`、`Updated 3 days ago` など)を除く。毎日変わってハッシュを動かすため。絶対日付(`Last updated: …`)は残す。
+
 ## recommendations.json の change
 
 `kind`: `official`(規則・出典必須)/ `inference`(出典を付ける場合は全項目、付けない場合はすべて null)/ `editorial`(出典なし)。

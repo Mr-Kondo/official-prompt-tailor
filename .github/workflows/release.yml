@@ -1,0 +1,30 @@
+name: release
+
+# Pushing a tag vX.Y.Z publishes a GitHub Release with the ZIP for claude.ai / Cowork.
+# The notes are release-notes/vX.Y.Z.md when the tag has that file (commit it before tagging), else generated.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: The tag must match PLUGIN_VERSION in install.py
+        run: grep -qx "PLUGIN_VERSION = \"${GITHUB_REF_NAME#v}\"" install.py
+      - run: python3 -m unittest discover -s tests
+      - run: mkdir dist && python3 install.py --zip dist
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -f "release-notes/$GITHUB_REF_NAME.md" ]; then notes=(--notes-file "release-notes/$GITHUB_REF_NAME.md"); else notes=(--generate-notes); fi
+          gh release create "$GITHUB_REF_NAME" dist/official-prompt-tailor.zip --title "$GITHUB_REF_NAME" --verify-tag "${notes[@]}"

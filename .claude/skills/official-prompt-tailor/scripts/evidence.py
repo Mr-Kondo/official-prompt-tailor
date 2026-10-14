@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""official-prompt-tailor evidence tool: fetch / verify / assess / compare.
+"""official-prompt-tailor evidence tool: fetch / verify / assess / compare / drift.
 
 Standard library only. It verifies recorded evidence (acquisition, hashes, citations,
 scope, change binding, observed reads, review records, evaluation records); it does not
@@ -17,9 +17,12 @@ import re
 import socket
 import statistics
 import sys
+import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections import namedtuple
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -35,6 +38,7 @@ PURPOSES = ("one-shot", "persistent-instructions", "skill-instructions", "agent-
 EXTRACTIONS = ("html-main-v1", "html-article-v1", "html-body-v1", "markdown-v1")
 FRESH_DAYS = 7  # local policy, not a vendor rule
 MAX_HOPS, TIMEOUT, MAX_BYTES = 5, 15, 5 * 1024 * 1024
+RETRY_WAIT = 2  # seconds drift waits before it looks again at a source that looks wrong
 MAX_EXCERPT = 400
 TS_FMT = "%Y-%m-%dT%H:%M:%SZ"
 SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
@@ -329,6 +333,9 @@ class _Extract(html.parser.HTMLParser):
 
 CHALLENGE = ("just a moment", "verify you are human", "access denied", "enable javascript", "captcha",
              "sign in to continue", "log in to continue")
+# "Updated 3 days ago" changes every day without the content changing, so it must not move the body hash.
+# Absolute dates ("Last updated: Jun 18, 2026") stay: they only change when the page does.
+UPDATED_LABEL = re.compile(r"^Updated (today|yesterday|(about |over |almost )?(a|an|\d+) (minute|hour|day|week|month|year)s? ago)$", re.I)
 
 
 def process_body(src, raw, content_type):
@@ -354,7 +361,7 @@ def process_body(src, raw, content_type):
         p = _Extract({"html-main-v1": "main", "html-article-v1": "article", "html-body-v1": "body"}[ex])
         p.feed(text)
         p.close()
-        lines = p.result()
+        lines = [ln for ln in p.result() if not UPDATED_LABEL.match(ln)]
         if not lines:
             raise Blocked("container_missing_or_empty" if not p.done else "body_empty")
         body = "\n".join(lines) + "\n"
@@ -686,6 +693,82 @@ def stub_review(orig_sha, reg_sha):
             "checked_at": None, "checks": [], "status": "NOT_REVIEWED"}
 
 
+def _rule_stale(rule, body, body_sha):
+    """True when the source body changed since the rule was reviewed (hash differs or the excerpt is gone)."""
+    return rule["source_body_sha256"] != body_sha or rule["source_excerpt"] not in body
+
+
+def _rule_state(rule, body, body_sha):
+    if body is None:
+        return "unverifiable"
+    if rule["review_status"] != "reviewed":
+        return "unreviewed"
+    if not _rule_stale(rule, body, body_sha):
+        return "current"
+    return "excerpt_missing" if rule["source_excerpt"] not in body else "changed"
+
+
+Observed = namedtuple("Observed", "status error body sha256")  # one source when checked; body is None if it could not be read
+
+
+def _observe_run(run, only):
+    acq = load_json(_read_run(run, "acquisition.json"))
+    validate_acquisition(acq)
+    observed = {}
+    for e in acq["sources"]:
+        if only and e["source_id"] not in only:
+            continue
+        body = None
+        if e["status"] in ("live", "cache"):  # stale / blocked / missing cannot speak for the source today
+            raw = safe_join(run, e["body_path"]).read_bytes()
+            if sha_bytes(raw) != e["body_sha256"]:
+                raise ContractError(f"{e['source_id']}: body.txt differs from the recorded SHA-256")
+            body = norm(raw.decode("utf-8"))
+        observed[e["source_id"]] = Observed(e["status"], e["error"], body, e["body_sha256"])
+    return observed
+
+
+def _observe_live(sources, only):
+    observed = {}
+    with tempfile.TemporaryDirectory() as tmp:
+        for s in sources:
+            if only and s["source_id"] not in only:
+                continue
+            e = fetch_live(s, Path(tmp))
+            body = read_text(Path(tmp) / e["body_path"]) if e["status"] == "live" else None
+            observed[s["source_id"]] = Observed(e["status"], e["error"], body, e["body_sha256"])
+    return observed
+
+
+def _rule_states(reg, observed):
+    return [{"rule_id": r["rule_id"], "source_id": r["source_id"],
+             "state": _rule_state(r, observed[r["source_id"]].body, observed[r["source_id"]].sha256)}
+            for r in reg["rules"] if r["source_id"] in observed]
+
+
+def drift(run=None, only=()):
+    """Have source bodies changed since each rule was reviewed? Hash and excerpt only; no semantic judgement."""
+    reg, reg_sha = load_registry()
+    unknown = sorted(set(only) - {s["source_id"] for s in reg["sources"]})
+    if unknown:
+        raise ContractError(f"unknown source ids {unknown}")
+    observed = _observe_run(Path(run), only) if run else _observe_live(reg["sources"], only)
+    rules = _rule_states(reg, observed)
+    doubtful = {r["source_id"] for r in rules if r["state"] in ("changed", "excerpt_missing")} | {k for k, o in observed.items() if o.body is None}
+    if doubtful and not run:  # one answer can be a CDN node mid-deploy or a dropped connection: look once more before reporting
+        time.sleep(RETRY_WAIT)
+        observed.update(_observe_live([s for s in reg["sources"] if s["source_id"] in doubtful], ()))
+        rules = _rule_states(reg, observed)
+    if any(r["state"] in ("changed", "excerpt_missing") for r in rules):
+        verdict = "DRIFT"
+    else:
+        verdict = "INCOMPLETE" if any(o.body is None for o in observed.values()) else "CURRENT"
+    return {"schema_version": 1, "mode": "run" if run else "live", "checked_at": iso(utcnow()),
+            "registry_sha256": reg_sha, "verdict": verdict,
+            "sources": [{"source_id": k, "status": o.status, "error": o.error, "body_sha256": o.sha256} for k, o in observed.items()],
+            "rules": rules}
+
+
 def rubric_version():
     m = re.search(r"^rubric_version:\s*(\S+)", RUBRIC_PATH.read_text(encoding="utf-8"), re.M)
     if not m:
@@ -969,7 +1052,7 @@ def _check_change_evidence(R, c, bodies, entries, srcmap, rules, inp, acq):
         R.fail("citation", "excerpt_not_in_lines", "exact_excerpt not found in cited lines", **kw)
     if rule["source_excerpt"] not in region:
         R.fail("citation", "lines_not_rule_evidence", "cited lines do not contain the rule's source_excerpt", **kw)
-    if rule["source_body_sha256"] != body_sha or rule["source_excerpt"] not in body:
+    if _rule_stale(rule, body, body_sha):
         R.inc("rule_review", "rereview_pending", "source body changed since the rule was reviewed", **kw)
 
 
@@ -1667,6 +1750,9 @@ def main(argv=None):
     c.add_argument("--plan", required=True)
     c.add_argument("--results", required=True)
     c.add_argument("--cases", default="evals/prompt-tailor-cases.jsonl")
+    d = sub.add_parser("drift")
+    d.add_argument("--run")
+    d.add_argument("--source", action="append", default=[])
     args = ap.parse_args(argv)
     for stream in (sys.stdout, sys.stderr):  # Windows consoles default to a legacy code page; the JSON holds Japanese text
         if hasattr(stream, "reconfigure"):
@@ -1685,6 +1771,10 @@ def main(argv=None):
             out = assess(args.run, args.review)
             code = {"PASS": 0, "FAIL": 1}.get(out["verdict"], 2)
             return _emit("assess", code, out, f"{out['verdict']} {sorted({e['code'] for e in out['errors']})}")
+        if args.cmd == "drift":
+            rep = drift(args.run, args.source)
+            stale = [r["rule_id"] for r in rep["rules"] if r["state"] in ("changed", "excerpt_missing")]
+            return _emit("drift", 0 if rep["verdict"] == "CURRENT" else 2, rep, f"{rep['verdict']} {stale}")
         code, ev = compare(args.run, args.plan, args.results, args.cases)
         return _emit("compare", code, ev, f"{ev['status']} {ev['contract_violations'][:3] or ev['incomplete_reasons'][:3]}")
     except ContractError as e:
