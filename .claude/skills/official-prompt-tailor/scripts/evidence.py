@@ -663,7 +663,7 @@ def do_fetch(input_path, out, mode, cache=None):
     selected = select_sources(reg, inp)
     started = utcnow()
     (out / "input.json").write_bytes(inp_raw)
-    (out / "original.md").write_text(original, encoding="utf-8", newline="\n")
+    (out / "original.md").write_bytes(original.encode("utf-8"))
     entries = []
     for sid in selected:
         entries.append(fetch_live(srcmap[sid], out) if mode == "live" else fetch_cache(srcmap[sid], cache, out, started))

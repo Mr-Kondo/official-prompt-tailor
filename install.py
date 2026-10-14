@@ -177,8 +177,8 @@ def make_plugin(out_dir, author, force, dry):
     skill = dest / "skills" / NAME
     shutil.copytree(SRC, skill, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     (dest / ".codex-plugin").mkdir()
-    (dest / ".codex-plugin" / "plugin.json").write_text(
-        json.dumps(plugin_manifest(author or PLUGIN_AUTHOR), ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
+    (dest / ".codex-plugin" / "plugin.json").write_bytes(
+        (json.dumps(plugin_manifest(author or PLUGIN_AUTHOR), ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
     ok, msg = self_check(skill)
     if not ok:
         shutil.rmtree(dest)  # the copy this run just made
@@ -316,7 +316,7 @@ def main(argv=None):
         else:
             say(f"append 'outputs/' to {f}")
             if not a.dry_run:
-                f.write_text(text + ("" if not text or text.endswith("\n") else "\n") + "outputs/\n", encoding="utf-8", newline="\n")
+                f.write_bytes((text + ("" if not text or text.endswith("\n") else "\n") + "outputs/\n").encode("utf-8"))
 
     if a.dry_run:
         print("dry-run only: nothing was changed")
