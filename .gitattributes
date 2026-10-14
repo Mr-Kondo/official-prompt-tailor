@@ -1,0 +1,3 @@
+# Keep LF on every platform. Git for Windows checks out CRLF by default (core.autocrlf=true), which changes the
+# bytes that the recorded SHA-256 values in evals/ are computed over.
+* text=auto eol=lf

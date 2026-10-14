@@ -55,8 +55,9 @@ def die(msg):
 
 
 def self_check(skill_dir):
-    r = subprocess.run([sys.executable, "-I", "-B", "-c", SELF_CHECK, str(Path(skill_dir) / "scripts")],
-                       capture_output=True, text=True)
+    # UTF-8 on both ends: a Windows console code page must not decide how the child's messages (paths may be Japanese) are read.
+    r = subprocess.run([sys.executable, "-I", "-B", "-X", "utf8", "-c", SELF_CHECK, str(Path(skill_dir) / "scripts")],
+                       capture_output=True, text=True, encoding="utf-8", errors="replace")
     return r.returncode == 0, (r.stdout if r.returncode == 0 else r.stderr).strip()
 
 

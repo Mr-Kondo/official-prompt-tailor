@@ -146,11 +146,11 @@ class Base(unittest.TestCase):
         return self.tmp / "outputs" / run_id
 
     def entry(self, run, sid="doc-a"):
-        return next(e for e in json.loads((run / "acquisition.json").read_text())["sources"] if e["source_id"] == sid)
+        return next(e for e in json.loads((run / "acquisition.json").read_text(encoding="utf-8"))["sources"] if e["source_id"] == sid)
 
     def generate(self, run, changes=None, optimized=OPTIMIZED, status="complete"):
         changes = DEFAULT_CHANGES if changes is None else changes
-        inp = json.loads((run / "input.json").read_text())
+        inp = json.loads((run / "input.json").read_text(encoding="utf-8"))
         orig = (run / "original.md").read_text(encoding="utf-8")
         (run / "optimized.md").write_text(optimized, encoding="utf-8")
         recs = []
@@ -171,13 +171,13 @@ class Base(unittest.TestCase):
 
     def rewrite_rec(self, run, fn):
         p = run / "recommendations.json"
-        rec = json.loads(p.read_text())
+        rec = json.loads(p.read_text(encoding="utf-8"))
         fn(rec)
         p.write_text(json.dumps(rec, ensure_ascii=False), encoding="utf-8")
 
     def rewrite_acq(self, run, fn):
         p = run / "acquisition.json"
-        acq = json.loads(p.read_text())
+        acq = json.loads(p.read_text(encoding="utf-8"))
         fn(acq)
         p.write_text(json.dumps(acq), encoding="utf-8")
 
@@ -234,12 +234,12 @@ class TestPositive(Base):
         self.assertEqual(acq["original_sha256"], ev.sha_text(ORIGINAL))
         self.assertEqual(acq["selected_sources"], ["doc-a"])
         # nav/script/footer text is not evidence; <pre> indentation is kept
-        body = (run / e["body_path"]).read_text()
+        body = (run / e["body_path"]).read_text(encoding="utf-8")
         for absent in ("NavOnlyLocator", "ScriptOnlyLocator", "FooterOnlyLocator"):
             self.assertNotIn(absent, body)
         self.assertIn("  tests/test_date.py", body)
-        self.assertEqual(json.loads((run / "evaluation.json").read_text())["status"], "NOT_EVALUATED")
-        self.assertEqual(json.loads((run / "semantic-review.json").read_text())["status"], "NOT_REVIEWED")
+        self.assertEqual(json.loads((run / "evaluation.json").read_text(encoding="utf-8"))["status"], "NOT_EVALUATED")
+        self.assertEqual(json.loads((run / "semantic-review.json").read_text(encoding="utf-8"))["status"], "NOT_REVIEWED")
 
     def test_pass_live_requires_everything_and_exits_0(self):
         run, log = self.good_run()
@@ -416,7 +416,7 @@ class TestBody(Base):
     def test_markdown_source_uses_markdown_adapter(self):
         code, acq = self.fetch(purpose="skill-instructions")
         self.assertEqual((code, acq["selected_sources"]), (0, ["doc-a", "doc-md"]))
-        self.assertIn("## Details", (self.run_dir() / "snapshots/doc-md/body.txt").read_text())
+        self.assertIn("## Details", (self.run_dir() / "snapshots/doc-md/body.txt").read_text(encoding="utf-8"))
 
     def tamper_cases(self):
         run, log = self.good_run()
@@ -437,7 +437,7 @@ class TestBody(Base):
     def test_consistent_body_edit_is_caught_by_reextraction(self):
         run, log, e = self.tamper_cases()
         body = run / e["body_path"]
-        body.write_text(body.read_text().replace("Give a check", "Skip every check"), encoding="utf-8")
+        body.write_text(body.read_text(encoding="utf-8").replace("Give a check", "Skip every check"), encoding="utf-8")
         self.rewrite_acq(run, lambda a: a["sources"][0].update({"body_sha256": ev.sha_file(body)}))
         self.assertIn("body_not_from_raw", codes(self.verify(run, "live", log)))
 
@@ -585,10 +585,10 @@ class TestTimeAndReads(Base):
 
     def test_cache_fetch_rejects_tampered_snapshot_and_future_date(self):
         p = self.run / "snapshots/doc-a/body.txt"
-        p.write_text(p.read_text() + "x\n", encoding="utf-8")
+        p.write_text(p.read_text(encoding="utf-8") + "x\n", encoding="utf-8")
         with self.assertRaises(ev.ContractError):
             self.fetch("run-t", "cache", self.run)
-        p.write_text(p.read_text()[:-2], encoding="utf-8")
+        p.write_text(p.read_text(encoding="utf-8")[:-2], encoding="utf-8")
         self.rewrite_acq(self.run, lambda a: a["sources"][0].update({"fetched_at": "2026-12-01T00:00:00Z"}))
         with self.assertRaises(ev.ContractError):
             self.fetch("run-f", "cache", self.run)
@@ -772,7 +772,7 @@ class TestLifecycleRouting(Base):
 
     def test_unknown_surface_and_model_stay_unknown(self):
         self.fetch()
-        inp = json.loads((self.run_dir() / "input.json").read_text())
+        inp = json.loads((self.run_dir() / "input.json").read_text(encoding="utf-8"))
         self.assertEqual((inp["target_surface"], inp["model_id"]), ("unknown", "unknown"))
         with self.assertRaises(ev.ContractError):
             self.fetch("run-b", target_surface="")
@@ -787,7 +787,7 @@ class TestFilesAndStructure(Base):
         before = (self.run_dir() / "acquisition.json").read_bytes()
         with self.assertRaises(ev.ContractError):
             self.fetch()
-        self.assertEqual(marker.read_text(), "keep")
+        self.assertEqual(marker.read_text(encoding="utf-8"), "keep")
         self.assertEqual((self.run_dir() / "acquisition.json").read_bytes(), before)
 
     def test_unsafe_run_ids_and_paths(self):
@@ -840,7 +840,7 @@ class TestFilesAndStructure(Base):
             "bad timestamp": lambda a: a.update({"started_at": "yesterday"}),
             "duplicate source": lambda a: (a["sources"].append(dict(a["sources"][0])), a["selected_sources"].append("doc-a")),
         }
-        good = (run / "acquisition.json").read_text()
+        good = (run / "acquisition.json").read_text(encoding="utf-8")
         for name, fn in mutations.items():
             with self.subTest(name):
                 (run / "acquisition.json").write_text(good, encoding="utf-8")
@@ -855,7 +855,7 @@ class TestFilesAndStructure(Base):
                    "official without source": lambda r: r["changes"][2].update({"source_id": None}),
                    "unknown key": lambda r: r.update({"verified": True}),
                    "bad status": lambda r: r.update({"generation_status": "verified"})}
-        good_rec = (run / "recommendations.json").read_text()
+        good_rec = (run / "recommendations.json").read_text(encoding="utf-8")
         for name, fn in rec_mut.items():
             with self.subTest(name):
                 (run / "recommendations.json").write_text(good_rec, encoding="utf-8")
@@ -863,7 +863,7 @@ class TestFilesAndStructure(Base):
                 self.assertIn("invalid_structure", codes(self.verify(run, "live", log)))
 
     def test_registry_validation_rejects_bad_registries(self):
-        good = json.loads((self.tmp / "registry.json").read_text())
+        good = json.loads((self.tmp / "registry.json").read_text(encoding="utf-8"))
         def mutate(fn):
             r = json.loads(json.dumps(good))
             fn(r)
@@ -934,9 +934,9 @@ class AssessBase(Base):
         return p
 
     def review(self, method="human", cal=None, mutate=None, **over):
-        rec = json.loads((self.run / "recommendations.json").read_text())
-        inp = json.loads((self.run / "input.json").read_text())
-        acq = json.loads((self.run / "acquisition.json").read_text())
+        rec = json.loads((self.run / "recommendations.json").read_text(encoding="utf-8"))
+        inp = json.loads((self.run / "input.json").read_text(encoding="utf-8"))
+        acq = json.loads((self.run / "acquisition.json").read_text(encoding="utf-8"))
         checks, n = [], 0
 
         def add(cat, cid, judgment="supported", osp=None, nsp=None, src=None, lines=None, ex=None):
@@ -985,12 +985,12 @@ class TestAssess(AssessBase):
         out = self.assess(self.review())
         self.assertEqual(out["verdict"], "PASS", out["errors"])
         self.assertEqual(out["review_method"], "human")
-        self.assertEqual(json.loads((self.run / "semantic-verification.json").read_text())["verdict"], "PASS")
+        self.assertEqual(json.loads((self.run / "semantic-verification.json").read_text(encoding="utf-8"))["verdict"], "PASS")
         self.assertEqual(self.cli("assess", "--run", str(self.run), "--review", str(self.run / "semantic-review.json"))[0], 0)
 
     def test_nothing_reviewed_is_incomplete_not_pass(self):
         stub = self.run / "semantic-review.json"
-        self.assertEqual(json.loads(stub.read_text())["status"], "NOT_REVIEWED")
+        self.assertEqual(json.loads(stub.read_text(encoding="utf-8"))["status"], "NOT_REVIEWED")
         out = self.assess(stub)
         self.assertEqual(out["verdict"], "INCOMPLETE")
         self.assertEqual(self.cli("assess", "--run", str(self.run), "--review", str(stub))[0], 2)
@@ -1006,7 +1006,7 @@ class TestAssess(AssessBase):
     def test_a_single_contradiction_is_not_averaged_away(self):
         out = self.assess(self.review(mutate=self.set_check("source-support", "contradicted", status="FAIL")))
         self.assertEqual(out["verdict"], "FAIL")
-        self.assertGreater(sum(c["judgment"] == "supported" for c in json.loads((self.run / "semantic-review.json").read_text())["checks"]), 5)
+        self.assertGreater(sum(c["judgment"] == "supported" for c in json.loads((self.run / "semantic-review.json").read_text(encoding="utf-8"))["checks"]), 5)
 
     def test_insufficient_is_never_a_pass(self):
         out = self.assess(self.review(mutate=self.set_check("scope", "insufficient", status="INCOMPLETE")))
@@ -1196,7 +1196,7 @@ class TestCompare(CompareBase):
         self.assertAlmostEqual(e["differences"]["success"], 0.5)
         self.assertGreater(len(e["execution_artifacts"]), 0)
         self.assertIn("not a general", e["scope"])
-        self.assertEqual(json.loads((self.run / "evaluation.json").read_text())["status"], "IMPROVED_ON_TEST_SET")
+        self.assertEqual(json.loads((self.run / "evaluation.json").read_text(encoding="utf-8"))["status"], "IMPROVED_ON_TEST_SET")
         code, out, _ = self.cli("compare", "--run", str(self.run), "--plan", str(self.plan_path), "--results", str(self.results), "--cases", str(self.cases))
         self.assertEqual(code, 0)
 
@@ -1552,7 +1552,7 @@ class TestInstall(unittest.TestCase):
     def install(self, *args):
         # HOME for POSIX, USERPROFILE for Windows: Path.home() reads whichever the platform uses
         env = {**os.environ, "HOME": str(self.home), "USERPROFILE": str(self.home), "PYTHONDONTWRITEBYTECODE": "1"}
-        return self.sp.run([sys.executable, "-B", str(ROOT / "install.py"), *args], capture_output=True, text=True, env=env)
+        return self.sp.run([sys.executable, "-B", str(ROOT / "install.py"), *args], capture_output=True, text=True, encoding="utf-8", env=env)
 
     def test_requires_an_explicit_target(self):
         r = self.install()
@@ -1577,30 +1577,30 @@ class TestInstall(unittest.TestCase):
             self.assertTrue((dest / rel).is_file(), rel)
         self.assertFalse(list(dest.rglob("__pycache__")))
         self.assertEqual(sorted(p.name for p in (self.proj / ".claude").iterdir()), ["skills"])  # no settings / hooks
-        self.assertEqual((self.proj / ".gitignore").read_text(), "outputs/\n")
+        self.assertEqual((self.proj / ".gitignore").read_text(encoding="utf-8"), "outputs/\n")
         self.assertEqual(self.install("--project", str(self.proj), "--force", "--gitignore").returncode, 0)
-        self.assertEqual((self.proj / ".gitignore").read_text(), "outputs/\n")  # not appended twice
+        self.assertEqual((self.proj / ".gitignore").read_text(encoding="utf-8"), "outputs/\n")  # not appended twice
         # the copy runs on its own (SKILL_DIR is derived from the script location)
         out = self.sp.run([sys.executable, "-I", "-B", str(dest / "scripts" / "evidence.py"), "verify", "--run", "none", "--mode", "live"],
-                          capture_output=True, text=True, cwd=self.proj)
+                          capture_output=True, text=True, encoding="utf-8", cwd=self.proj)
         self.assertEqual(out.returncode, 2)
         self.assertIn("run directory not found", out.stderr)
 
     def test_gitignore_keeps_existing_lines_and_adds_a_missing_newline(self):
         (self.proj / ".gitignore").write_text("node_modules/", encoding="utf-8")
         self.assertEqual(self.install("--project", str(self.proj), "--gitignore").returncode, 0)
-        self.assertEqual((self.proj / ".gitignore").read_text(), "node_modules/\noutputs/\n")
+        self.assertEqual((self.proj / ".gitignore").read_text(encoding="utf-8"), "node_modules/\noutputs/\n")
 
     def test_existing_copy_is_refused_then_kept_as_a_backup_outside_skills(self):
         self.assertEqual(self.install("--project", str(self.proj)).returncode, 0)
         dest = self.proj / ".claude" / "skills" / "official-prompt-tailor"
         (dest / "local-note.txt").write_text("mine", encoding="utf-8")
         self.assertEqual(self.install("--project", str(self.proj)).returncode, 1)
-        self.assertEqual((dest / "local-note.txt").read_text(), "mine")
+        self.assertEqual((dest / "local-note.txt").read_text(encoding="utf-8"), "mine")
         self.assertEqual(self.install("--project", str(self.proj), "--force").returncode, 0)
         backups = list((self.proj / ".claude").glob("official-prompt-tailor.bak-*"))
         self.assertEqual(len(backups), 1)
-        self.assertEqual((backups[0] / "local-note.txt").read_text(), "mine")
+        self.assertEqual((backups[0] / "local-note.txt").read_text(encoding="utf-8"), "mine")
         self.assertEqual([p.name for p in (self.proj / ".claude" / "skills").iterdir()], ["official-prompt-tailor"])
         self.assertFalse((dest / "local-note.txt").exists())
 
@@ -1624,7 +1624,7 @@ class TestInstall(unittest.TestCase):
             with self.assertRaises(SystemExit) as cm:
                 install.main(["--project", str(self.proj), "--force"])
         self.assertEqual(cm.exception.code, 1)
-        self.assertEqual((dest / "local-note.txt").read_text(), "mine")  # previous copy is back
+        self.assertEqual((dest / "local-note.txt").read_text(encoding="utf-8"), "mine")  # previous copy is back
         self.assertEqual(list((self.proj / ".claude").glob("*.bak-*")), [])
 
     def test_each_product_gets_the_folder_its_documentation_names(self):
@@ -1656,8 +1656,9 @@ class TestInstall(unittest.TestCase):
             self.assertIn("official-prompt-tailor/" + needed, names)
         self.assertFalse([n for n in names if "__pycache__" in n or n.endswith(".pyc")])
         z.extractall(self.tmp / "unz")  # the extracted skill runs on its own
+        z.close()  # Windows cannot rename an open file, and the --force run below renames this ZIP
         out2 = self.sp.run([sys.executable, "-I", "-B", str(self.tmp / "unz/official-prompt-tailor/scripts/evidence.py"), "verify", "--run", "none", "--mode", "live"],
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, encoding="utf-8")
         self.assertIn("run directory not found", out2.stderr)
         self.assertEqual(self.install("--zip", str(out)).returncode, 1)  # refuses to overwrite
         self.assertEqual(self.install("--zip", str(out), "--force").returncode, 0)
@@ -1712,7 +1713,7 @@ class TestInstall(unittest.TestCase):
             self.assertTrue((skill / rel).is_file(), rel)
         self.assertFalse(list(root.rglob("__pycache__")))
         out2 = self.sp.run([sys.executable, "-I", "-B", str(skill / "scripts" / "evidence.py"), "verify", "--run", "none", "--mode", "live"],
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, encoding="utf-8")
         self.assertIn("run directory not found", out2.stderr)  # the bundled skill runs on its own
 
     def test_plugin_refuses_overwrite_keeps_a_backup_and_checks_its_arguments(self):
@@ -1724,7 +1725,7 @@ class TestInstall(unittest.TestCase):
         self.assertEqual(self.install("--plugin", str(out), "--force").returncode, 0)
         backups = list(out.glob("official-prompt-tailor.bak-*"))
         self.assertEqual(len(backups), 1)
-        self.assertEqual((backups[0] / "local-note.txt").read_text(), "mine")
+        self.assertEqual((backups[0] / "local-note.txt").read_text(encoding="utf-8"), "mine")
         self.assertFalse((out / "official-prompt-tailor" / "local-note.txt").exists())
         for bad in (["--target", "codex"], ["--gitignore"]):
             self.assertEqual(self.install("--plugin", str(out), *bad).returncode, 1, bad)
@@ -1770,7 +1771,7 @@ class TestInstall(unittest.TestCase):
         (stranger / "notes.txt").write_text("not this skill", encoding="utf-8")
         r = self.install("--uninstall", "--target", "codex", "--project", str(self.proj), "--force")
         self.assertEqual(r.returncode, 1)  # --force does not override recognition
-        self.assertEqual((stranger / "notes.txt").read_text(), "not this skill")
+        self.assertEqual((stranger / "notes.txt").read_text(encoding="utf-8"), "not this skill")
 
     def test_uninstall_never_touches_the_source_or_what_a_symlink_points_to(self):
         self.assertEqual(self.install("--uninstall", "--project", str(ROOT), "--force").returncode, 1)
@@ -1783,7 +1784,7 @@ class TestInstall(unittest.TestCase):
         symlink(link, real)
         self.assertEqual(self.install("--uninstall", "--project", str(self.proj)).returncode, 0)
         self.assertFalse(link.exists() or link.is_symlink())
-        self.assertEqual((real / "keep.txt").read_text(), "keep")
+        self.assertEqual((real / "keep.txt").read_text(encoding="utf-8"), "keep")
 
     def test_uninstall_a_plugin_and_its_argument_rules(self):
         out = self.tmp / "plug"

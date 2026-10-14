@@ -52,13 +52,13 @@ def render(kind, r):
 
 def publish(label, title, body):
     def gh(*args, **kw):
-        return subprocess.run(["gh", *args], check=True, capture_output=True, text=True, **kw).stdout.strip()
+        return subprocess.run(["gh", *args], check=True, capture_output=True, text=True, encoding="utf-8", **kw).stdout.strip()
 
     number = gh("issue", "list", "--label", label, "--state", "open", "--json", "number", "--jq", ".[0].number // empty")
     if number:
         gh("issue", "edit", number, "--body-file", "-", input=body)
         return
-    subprocess.run(["gh", "label", "create", label, "--description", f"automated: {label}"], capture_output=True, text=True)  # fails when it exists: fine
+    subprocess.run(["gh", "label", "create", label, "--description", f"automated: {label}"], capture_output=True, text=True, encoding="utf-8")  # fails when it exists: fine
     gh("issue", "create", "--title", title, "--label", label, "--body-file", "-", input=body)
 
 
