@@ -187,7 +187,7 @@ def make_plugin(out_dir, author, force, dry):
         die("plugin self-check failed; rolled back\n" + msg)
     print(msg)
     print(f"created: {dest}" + (f" (previous copy kept at {backup})" if backup else ""))
-    print("next: how a plugin folder is added to ChatGPT Work is not verified here; see README.md.")
+    print("next: how a plugin folder is added to ChatGPT Work is not verified here; see docs/products.md.")
     print("  The skill inside needs script execution and network egress to the domains listed in README.md.")
     return 0
 

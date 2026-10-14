@@ -209,7 +209,7 @@ def check_host_public(host):
         infos = socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
     except socket.gaierror:
         if any(os.environ.get(k) for k in ("HTTPS_PROXY", "https_proxy")):
-            return "dns_delegated_to_proxy"  # residual risk: documented in README
+            return "dns_delegated_to_proxy"  # residual risk: documented in docs/trust-boundary.md
         raise Blocked("dns_failure")
     for info in infos:
         ip = ipaddress.ip_address(info[4][0].split("%")[0])
