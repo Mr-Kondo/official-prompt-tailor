@@ -11,6 +11,7 @@ import json
 import re
 import sys
 import tempfile
+import time
 import urllib.parse
 from pathlib import Path
 
@@ -92,6 +93,18 @@ def candidates(index, default_keywords, pages, skip_keys):
     return found
 
 
+def fetch_index(index, tmp):
+    """(entry, llms.txt text or None). A failed answer is looked at once more, as drift does: one answer can be a dropped
+    connection or a CDN node mid-deploy. Each look gets its own directory because fetch_live never overwrites a snapshot."""
+    for look in ("look-1", "look-2"):
+        e = ev.fetch_live(index_source(index), tmp / look)
+        if e["status"] == "live":
+            return e, ev.read_text(tmp / look / e["body_path"])
+        if look == "look-1":
+            time.sleep(ev.RETRY_WAIT)
+    return e, None
+
+
 def discover(mark_seen=False):
     reg, _ = ev.load_registry()
     cfg, triaged = load_config(), set(load_seen())
@@ -100,10 +113,10 @@ def discover(mark_seen=False):
     with tempfile.TemporaryDirectory() as tmp_name:
         tmp = Path(tmp_name)
         for index in cfg["indexes"]:
-            e = ev.fetch_live(index_source(index), tmp)
+            e, text = fetch_index(index, tmp)
             row = {"index_id": index["index_id"], "status": e["status"], "error": e["error"], "pages": 0, "candidates": []}
-            if e["status"] == "live":
-                pages = index_pages(index, ev.read_text(tmp / e["body_path"]))
+            if text is not None:
+                pages = index_pages(index, text)
                 row["pages"], row["candidates"] = len(pages), candidates(index, cfg["keywords"], pages, skip_keys)
             rows.append(row)
     listed = {c["key"] for row in rows for c in row["candidates"]}

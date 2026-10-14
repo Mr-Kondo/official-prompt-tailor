@@ -13,6 +13,7 @@ import maintain  # noqa: E402
 from test_official_prompt_tailor import A_URL, API_URL, HTML, Base, ev  # noqa: E402
 
 INDEX_URL, NEW_URL, NEW_MD = "https://docs.example.com/llms.txt", "https://docs.example.com/new-guide", "https://docs.example.com/new-notes.md"
+TEXT = {"content-type": "text/plain; charset=utf-8"}
 LLMS = """# Example Docs
 
 > Official documentation of the example product. Each line below is one page of the documentation.
@@ -33,11 +34,12 @@ class MaintainBase(Base):
     def setUp(self):
         super().setUp()
         self.cfg, self.seen = self.tmp / "discovery.json", self.tmp / "seen.json"
-        for p in (mock.patch.object(maintain, "CONFIG", self.cfg), mock.patch.object(maintain, "SEEN", self.seen)):
+        for p in (mock.patch.object(maintain, "CONFIG", self.cfg), mock.patch.object(maintain, "SEEN", self.seen),
+                  mock.patch.object(ev, "RETRY_WAIT", 0)):
             p.start()
             self.addCleanup(p.stop)
         self.write_config()
-        self.responses[INDEX_URL] = (200, {"content-type": "text/plain; charset=utf-8"}, LLMS.encode("utf-8"))
+        self.responses[INDEX_URL] = (200, TEXT, LLMS.encode("utf-8"))
 
     def write_config(self, **over):
         cfg = {"schema_version": 1, "keywords": ["prompt", "memory", "practices", "skills"],
@@ -67,6 +69,7 @@ class TestDiscover(MaintainBase):
         urls = {c["key"]: c["url"] for c in rep["indexes"][0]["candidates"]}
         self.assertEqual(urls["docs.example.com/docs/legacy-prompting"], "https://www.docs.example.com/docs/legacy-prompting.md")
         self.assertEqual(rep["indexes"][0]["pages"], 7)  # the link to the other host is not counted
+        self.assertEqual(self.calls, [INDEX_URL])  # an index that answers is asked once
 
     def test_mark_seen_makes_the_next_run_quiet(self):
         code, out, _ = self.tool("discover", "--mark-seen")
@@ -80,6 +83,16 @@ class TestDiscover(MaintainBase):
         code, out, _ = self.tool("discover")
         row = json.loads(out)["indexes"][0]
         self.assertEqual((code, json.loads(out)["verdict"], row["status"], row["error"]), (2, "INCOMPLETE", "blocked", "http_503"))
+        self.assertEqual(self.calls, [INDEX_URL, INDEX_URL])  # looked at once more, then reported
+
+    def test_an_index_that_answers_badly_once_is_listed_from_the_second_look(self):
+        # 2026-10-15: antigravity-docs answered once with bytes that were not UTF-8; its pages vanished from that week's report.
+        replies = iter([(200, TEXT, b"\xff\xfe\x00"), (200, TEXT, LLMS.encode("utf-8"))])
+        self.responses[INDEX_URL] = lambda: next(replies)
+        code, out, _ = self.tool("discover")
+        rep = json.loads(out)
+        self.assertEqual((code, rep["verdict"], rep["indexes"][0]["status"], len(self.keys(rep))), (2, "CANDIDATES", "live", 4))
+        self.assertEqual(self.calls, [INDEX_URL, INDEX_URL])
 
     def test_per_index_keywords_and_exclude(self):
         only_memory = {"index_id": "example-docs", "url": INDEX_URL, "scope": ["/docs/"], "keywords": ["memory"]}
