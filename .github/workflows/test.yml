@@ -11,9 +11,6 @@ permissions:
 jobs:
   test:
     runs-on: ${{ matrix.os }}
-    # The README claims Windows support and nothing else has ever run there, so a Windows failure is reported
-    # (red job) without failing the workflow until it has been looked at.
-    continue-on-error: ${{ matrix.os == 'windows-latest' }}
     strategy:
       fail-fast: false
       matrix:

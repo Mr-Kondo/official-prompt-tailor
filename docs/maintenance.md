@@ -120,7 +120,7 @@ python3 tools/maintain.py propose --url https://code.claude.com/docs/en/memory.m
 - `INCOMPLETE`(取得できない資料や一覧がある)は、実行の Summary に出るだけで、Issue にはなりません。通信エラーは、再実行で解消することがあります。
 - 再審査(または既読化)が済んだら、Issue を閉じます。次の週に残っていれば、Issue は開き直されます。
 
-`.github/workflows/test.yml` は、push と pull request で、Ubuntu は Python 3.9〜3.14、macOS と Windows は 3.9 と 3.14 のテストを実行します。Windows のジョブは、失敗しても workflow の失敗にしません。README は Windows 対応をうたっていますが、まだ一度も確かめていないためです。
+`.github/workflows/test.yml` は、push と pull request で、Ubuntu は Python 3.9〜3.14、macOS と Windows は 3.9 と 3.14 のテストを実行します。どの組み合わせが失敗しても、workflow は失敗になります。
 
 ## 意味審査
 
