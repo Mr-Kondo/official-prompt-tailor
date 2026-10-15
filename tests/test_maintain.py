@@ -650,6 +650,56 @@ class TestRereview(RereviewBase):
         self.assertIsNone(maintain.stored_body("doc-a", ev.sha_bytes(b"other")))
 
 
+class TestKeep(RereviewBase):
+    """`keep` is what the weekly job runs, so that the day a page changes there is an old body to compare with."""
+    def stored(self, sid):
+        return sorted(p.name for p in (maintain.STORE / sid).glob("*.txt")) if (maintain.STORE / sid).is_dir() else []
+
+    def test_it_keeps_the_body_the_rules_were_reviewed_against_once(self):
+        rep = maintain.keep(only=self.SRC)
+        self.assertEqual((rep["verdict"], rep["bodies_kept"], rep["without_old_body"]), ("COMPLETE", 2, []))
+        self.assertEqual(self.stored("doc-a"), [self.sha_now("doc-a") + ".txt"])
+        self.assertEqual(maintain.keep(only=self.SRC)["bodies_kept"], 0)
+        self.assertEqual(ev.REGISTRY_PATH.read_bytes(), self.before)
+
+    def test_a_page_that_changed_since_the_last_keep_does_not_replace_the_old_body(self):
+        maintain.keep(only=self.SRC)
+        old = self.stored("doc-a")
+        self.change_page(*TestRereview.FAR)
+        rep = maintain.keep(only=self.SRC)
+        self.assertEqual((rep["verdict"], rep["bodies_kept"], self.stored("doc-a")), ("COMPLETE", 0, old))
+        self.assertEqual({r["status"] for r in rep["sources"]}, {"page_changed"})
+        self.assertEqual(self.look()["verdict"], "READY_TO_STAMP")  # and rereview finds that old body
+
+    def test_a_page_that_was_never_kept_and_has_changed_leaves_the_old_body_missing(self):
+        self.change_page(*TestRereview.FAR)
+        rep = maintain.keep(only=self.SRC)
+        self.assertEqual((rep["verdict"], len(rep["without_old_body"])), ("PARTIAL", 2))
+        code, out, err = self.tool("keep", *self.SRC_ARGS)
+        self.assertEqual((code, json.loads(out)["verdict"]), (2, "PARTIAL"))
+        self.assertIn("no old body for 2", err)
+
+    def test_a_page_that_cannot_be_fetched_is_reported_and_keeps_what_was_kept(self):
+        maintain.keep(only=self.SRC)
+        self.responses[A_URL] = (500, HTML, b"")
+        rep = maintain.keep(only=["doc-a"])
+        self.assertEqual(([r["status"] for r in rep["sources"]], rep["verdict"]), (["not_fetched"], "COMPLETE"))
+
+    def test_bodies_no_rule_refers_to_are_dropped_only_when_every_source_was_looked_at(self):
+        maintain.keep(only=self.SRC)
+        stray = maintain.STORE / "doc-a" / ("0" * 64 + ".txt")
+        stray.write_text("old\n", encoding="utf-8")
+        maintain.keep(only=self.SRC)
+        self.assertTrue(stray.exists())  # a partial look prunes nothing
+        rep = maintain.keep()
+        self.assertEqual((rep["bodies_pruned"], stray.exists()), (1, False))
+        self.assertEqual(self.stored("doc-a"), [self.sha_now("doc-a") + ".txt"])
+
+    def test_an_unknown_source_is_refused(self):
+        with self.assertRaises(ev.ContractError):
+            maintain.keep(only=["nope"])
+
+
 class TestRereviewJudgement(unittest.TestCase):
     RULE = {"source_excerpt": "Use short sentences."}
     BODY = "# Style\n\nIntro line.\n\nUse short sentences.\n\nNext line.\n\n## Other\n\nUnrelated text.\n"

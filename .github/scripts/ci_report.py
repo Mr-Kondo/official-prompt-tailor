@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """CI glue for the weekly watch workflow (not part of the skill).
 
-  ci_report.py drift|discover RESULT.json [--issue]
+  ci_report.py drift|discover|kept RESULT.json [--issue]
 
 Prints a Markdown report. With --issue, a result that needs a person (DRIFT / CANDIDATES) is also written to the
 one open issue that carries the label of that kind (an issue is opened when none is). The body is replaced, not
@@ -14,6 +14,7 @@ import sys
 KINDS = {  # kind: (report heading, verdict that needs a person, issue title)
     "drift": ("公式資料の更新確認", "DRIFT", "公式資料が、規則の審査後に変わっています"),
     "discover": ("公式資料の新規ページ候補", "CANDIDATES", "公式資料に、登録していない新規ページの候補があります"),
+    "kept": ("審査時の本文の保存", None, None),  # a report only: never an issue
 }
 STATE = {"changed": "引用は残っているが、本文が変わった", "excerpt_missing": "引用が本文から消えた"}
 
@@ -44,8 +45,16 @@ def discover_lines(r):
     return out + [f"- 取得できなかった一覧: `{ix['index_id']}`({cell(ix['error'])})" for ix in r["indexes"] if ix["status"] != "live"]
 
 
+def kept_lines(r):
+    out = [f"- 新しく保存した本文: {r['bodies_kept']} 件、不要になって消した本文: {r['bodies_pruned']} 件", ""]
+    if r["without_old_body"]:
+        out += ["旧本文が無い規則の資料(この資料が変わっても、`rereview` は旧本文と比べられません):", ""]
+        out += [f"- `{x['source_id']}`(`{x['source_body_sha256'][:12]}…`)" for x in r["without_old_body"]]
+    return out + [f"- 取得できなかった資料: `{s['source_id']}`({cell(s['error'])})" for s in r["sources"] if s["status"] == "not_fetched"]
+
+
 def render(kind, r):
-    lines = drift_lines(r) if kind == "drift" else discover_lines(r)
+    lines = {"drift": drift_lines, "discover": discover_lines, "kept": kept_lines}[kind](r)
     head = [f"## {KINDS[kind][0]}: {r['verdict']}", "", f"確認日時(UTC): {r['checked_at']}", ""]
     return "\n".join(head + lines).rstrip("\n") + "\n"
 
@@ -68,7 +77,7 @@ def main(argv):
         result = json.load(f)
     report = render(kind, result)
     print(report)
-    if "--issue" in argv and result["verdict"] == KINDS[kind][1]:
+    if "--issue" in argv and KINDS[kind][1] and result["verdict"] == KINDS[kind][1]:
         publish(kind, KINDS[kind][2], report)
     return 0
 

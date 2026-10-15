@@ -506,6 +506,41 @@ def keep_body(source_id, sha, body):
     return True
 
 
+def keep(only=(), prune=True):
+    """Keep, for every source, the body its rules were reviewed against, as long as the page still has it; drop kept bodies that no rule refers to.
+    Run on a schedule, this means the old body exists on the day a page changes (rereview needs it then, not before). Writes nothing but STORE."""
+    reg = ev.load_registry()[0]
+    ids = {s["source_id"] for s in reg["sources"]}
+    if set(only) - ids:
+        raise ev.ContractError(f"unknown source ids {sorted(set(only) - ids)}")
+    wanted = {}
+    for r in reg["rules"]:
+        wanted.setdefault(r["source_id"], set()).add(r["source_body_sha256"])
+    rows, kept = [], 0
+    for sid, o in ev._observe_live(reg["sources"], only).items():
+        if o.body is None:
+            status = "not_fetched"
+        elif o.sha256 not in wanted.get(sid, ()):
+            status = "page_changed"
+        else:
+            fresh = keep_body(sid, o.sha256, o.body)
+            kept, status = kept + fresh, "kept" if fresh else "already_kept"
+        rows.append({"source_id": sid, "status": status, "error": o.error})
+    pruned = 0
+    if prune and not only and STORE.is_dir():
+        for path in sorted(STORE.glob("*/*.txt")):
+            if path.stem not in wanted.get(path.parent.name, ()):
+                path.unlink()
+                pruned += 1
+        for d in sorted(STORE.glob("*")):
+            if d.is_dir() and not any(d.iterdir()):
+                d.rmdir()
+    missing = [{"source_id": sid, "source_body_sha256": sha} for sid, shas in sorted(wanted.items()) if not only or sid in only
+               for sha in sorted(shas) if not (STORE / sid / f"{sha}.txt").is_file()]
+    return {"schema_version": 1, "checked_at": ev.iso(ev.utcnow()), "verdict": "COMPLETE" if not missing else "PARTIAL",
+            "bodies_kept": kept, "bodies_pruned": pruned, "without_old_body": missing, "sources": rows}
+
+
 def clip(line, width=160):
     return line if len(line) <= width else line[:width - 1] + "…"
 
@@ -998,6 +1033,9 @@ def main(argv=None):
     rr.add_argument("--accept", action="append", default=[])
     rr.add_argument("--reviewer")
     rr.add_argument("--write", action="store_true")
+    kp = sub.add_parser("keep")
+    kp.add_argument("--source", action="append", default=[])
+    kp.add_argument("--no-prune", action="store_true")
     rv = sub.add_parser("review")
     rv.add_argument("--source", action="append", default=[])
     rv.add_argument("--rule", action="append", default=[])
@@ -1028,6 +1066,10 @@ def main(argv=None):
             return ev._emit("rereview", 0 if rep["verdict"] in ("CURRENT", "STAMPED") else 2, rep,
                             f"{rep['verdict']} {len(rep['rules'])} rules (unchanged around the excerpt {n('context_unchanged')}, changed {n('context_changed')}, "
                             f"no old body {n('old_body_unavailable')}, excerpt gone {n('excerpt_missing')}), " + ("written" if rep["written"] else "nothing written"))
+        if args.cmd == "keep":
+            rep = keep(args.source, not args.no_prune)
+            return ev._emit("keep", 0 if rep["verdict"] == "COMPLETE" else 2, rep,
+                            f"{rep['verdict']} kept {rep['bodies_kept']}, pruned {rep['bodies_pruned']}, no old body for {len(rep['without_old_body'])}")
         if args.cmd == "review":
             rep = review(args.rule, args.source, args.run, args.context, args.limit)
             return ev._emit("review", 0, rep, f"{len(rep['recorded'])} recorded, {rep['skipped']} skipped, {rep['remaining']} not looked at")
