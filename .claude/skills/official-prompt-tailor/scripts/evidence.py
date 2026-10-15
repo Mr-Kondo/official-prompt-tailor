@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""official-prompt-tailor evidence tool: fetch / verify / assess / compare / drift.
+"""official-prompt-tailor evidence tool: fetch / verify / assess / compare / drift / rules.
 
 Standard library only. It verifies recorded evidence (acquisition, hashes, citations,
 scope, change binding, observed reads, review records, evaluation records); it does not
@@ -792,6 +792,27 @@ def drift(run=None, only=()):
             "registry_sha256": reg_sha, "verdict": verdict,
             "sources": [{"source_id": k, "status": o.status, "error": o.error, "body_sha256": o.sha256} for k, o in observed.items()],
             "rules": rules}
+
+
+def applicable_rules(run):
+    """The reviewed rules a run may choose from: in scope for its input (the checks verify makes) and grounded in a source it fetched.
+    The registry is too large to read whole; preconditions and exclusions are left to the one who picks."""
+    run = Path(run)
+    reg, reg_sha = load_registry()
+    inp, acq = load_json(_read_run(run, "input.json")), load_json(_read_run(run, "acquisition.json"))
+    validate_input(inp)
+    validate_acquisition(acq)
+    if acq["registry_sha256"] != reg_sha:
+        raise ContractError("registry.json changed since this run was fetched")
+    srcs = {s["source_id"]: s for s in reg["sources"] if s["source_id"] in acq["selected_sources"]}
+    tid, surface, model, purpose = inp["target_id"], inp["target_surface"], inp["model_id"], inp["purpose"]
+    fields = ("rule_id", "source_id", "kind", "purposes", "source_excerpt", "meaning", "allowed_change", "preconditions", "exclusions")
+    rules = [{k: r[k] for k in fields} for r in reg["rules"]
+             if r["review_status"] == "reviewed" and r["source_id"] in srcs and purpose in r["purposes"]
+             and tid in r["target_ids"] and tid in srcs[r["source_id"]]["target_ids"]
+             and in_list(r["surfaces"], surface) and in_list(srcs[r["source_id"]]["surfaces"], surface) and in_list(r["models"], model)]
+    return {"schema_version": 1, "run_id": acq["run_id"], "target_id": tid, "target_surface": surface, "model_id": model,
+            "purpose": purpose, "selected_sources": acq["selected_sources"], "rules": rules}
 
 
 def rubric_version():
@@ -1778,6 +1799,8 @@ def main(argv=None):
     d = sub.add_parser("drift")
     d.add_argument("--run")
     d.add_argument("--source", action="append", default=[])
+    r = sub.add_parser("rules")
+    r.add_argument("--run", required=True)
     args = ap.parse_args(argv)
     for stream in (sys.stdout, sys.stderr):  # Windows consoles default to a legacy code page; the JSON holds Japanese text
         if hasattr(stream, "reconfigure"):
@@ -1800,6 +1823,9 @@ def main(argv=None):
             rep = drift(args.run, args.source)
             stale = [r["rule_id"] for r in rep["rules"] if r["state"] in ("changed", "excerpt_missing")]
             return _emit("drift", 0 if rep["verdict"] == "CURRENT" else 2, rep, f"{rep['verdict']} {stale}")
+        if args.cmd == "rules":
+            out = applicable_rules(args.run)
+            return _emit("rules", 0, out, f"{len(out['rules'])} rules")
         code, ev = compare(args.run, args.plan, args.results, args.cases)
         return _emit("compare", code, ev, f"{ev['status']} {ev['contract_violations'][:3] or ev['incomplete_reasons'][:3]}")
     except ContractError as e:

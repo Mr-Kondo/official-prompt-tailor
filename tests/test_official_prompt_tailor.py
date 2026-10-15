@@ -1580,6 +1580,43 @@ class TestDrift(Base):
         self.assertEqual([self.calls.count(u) for u in (A_URL, MD_URL, API_URL)], [2, 1, 1])
 
 
+class TestRules(Base):
+    """`rules` lists what a run may choose from, so that nobody reads the whole registry (about 140 KB once it held 104 rules)."""
+    def listed(self, run_id="run-1", **over):
+        code, _ = self.fetch(run_id, **over)
+        self.assertEqual(code, 0)
+        return [r["rule_id"] for r in ev.applicable_rules(self.run_dir(run_id))["rules"]]
+
+    def test_only_reviewed_rules_in_scope_for_the_run_are_listed(self):
+        # claude-code, one-shot, surface and model unknown. Out: rule-model (model-x), rule-surface-api, rule-skill-only (purpose),
+        # rule-codex-only (target), rule-unreviewed, and rule-api (its source was not fetched in this run)
+        self.assertEqual(self.listed(), ["rule-verify", "rule-inference"])
+
+    def test_surface_model_purpose_and_target_decide(self):
+        for name, over, want in (("model", {"model_id": "model-x"}, ["rule-verify", "rule-model", "rule-inference"]),
+                                 ("api", {"target_surface": "api", "model_id": "model-x"},
+                                  ["rule-verify", "rule-model", "rule-api", "rule-inference", "rule-surface-api"]),
+                                 ("skill", {"purpose": "skill-instructions"}, ["rule-verify", "rule-skill-only", "rule-inference"]),
+                                 ("codex", {"target_id": "codex"}, ["rule-verify", "rule-codex-only", "rule-inference"])):
+            with self.subTest(name):
+                self.assertEqual(self.listed(f"run-{name}", **over), want)
+
+    def test_a_registry_changed_since_the_fetch_is_refused(self):
+        self.fetch()
+        self.set_registry(lambda r: r["rules"].pop())
+        with self.assertRaises(ev.ContractError):
+            ev.applicable_rules(self.run_dir())
+
+    def test_command_prints_what_is_needed_to_choose_and_cite(self):
+        self.fetch()
+        code, out, err = self.cli("rules", "--run", str(self.run_dir()))
+        rep = json.loads(out)
+        self.assertEqual((code, rep["selected_sources"], rep["purpose"]), (0, ["doc-a"], "one-shot"))
+        self.assertEqual(set(rep["rules"][0]), {"rule_id", "source_id", "kind", "purposes", "source_excerpt", "meaning",
+                                                "allowed_change", "preconditions", "exclusions"})
+        self.assertEqual(self.cli("rules", "--run", str(self.tmp / "no-such-run"))[0], 2)  # not a run directory: not runnable
+
+
 class TestShippedEvals(unittest.TestCase):
     def test_shipped_cases_are_well_formed_split_and_not_claimed_reviewed(self):
         rows = ev.load_jsonl(ROOT / "evals" / "prompt-tailor-cases.jsonl")

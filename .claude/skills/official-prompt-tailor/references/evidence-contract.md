@@ -47,6 +47,14 @@ verification.json  semantic-review.json  semantic-verification.json  evaluation.
 
 `--run` なしでは、`changed` / `excerpt_missing` になった資料と取得できなかった資料を、2 秒待って 1 回だけ取得し直し、2 回目の観測を採る(一時的な差異や通信エラーを報告しないため)。
 
+## rules
+
+`rules --run RUN` は、その run で選べる規則だけを出す(通信しない)。`registry.json` は規則が増えて大きいので、全体を読まずに済ませるための一覧であり、規則を選ぶ判断は含まない。
+
+条件(`verify` が適用範囲として確かめるものと同じ): `review_status` が `reviewed`、`input.json` の `target_id` と `purpose` が規則と資料に合う、`target_surface` と `model_id` が規則の `surfaces` / `models`(資料の `surfaces`)に合う(`unknown` は `all` にだけ合う)、規則の資料が `acquisition.json` の `selected_sources` にある。`preconditions` と `exclusions` は判定しない。
+
+出力 JSON: `run_id`、`target_id`、`target_surface`、`model_id`、`purpose`、`selected_sources`、`rules`(`rule_id` `source_id` `kind` `purposes` `source_excerpt` `meaning` `allowed_change` `preconditions` `exclusions`)。終了コードは 0。registry が取得のあとで変わっていれば契約違反(1)、run のファイルがなければ実行不能(2)。`drift` の `changed` / `excerpt_missing` は反映しないので、先に `drift --run` を実行する。
+
 HTML の本文から、相対時刻の行(`Updated today`、`Updated 3 days ago` など)を除く。毎日変わってハッシュを動かすため。絶対日付(`Last updated: …`)は残す。
 
 ## recommendations.json の change

@@ -11,7 +11,7 @@
   SKILL.md                       入口・手順・表示規則
   references/registry.json       資料(50)・対象(11)・審査済み規則(104)
   references/evidence-contract.md / review-rubric.md
-  scripts/evidence.py            fetch / verify / assess / compare / drift(標準ライブラリのみ)
+  scripts/evidence.py            fetch / verify / assess / compare / drift / rules(標準ライブラリのみ)
 tools/maintain.py                保守用(スキルには同梱しない): discover / propose
 .github/workflows/               test(Python 3.9〜3.14)・watch(週次の drift と discover)・release
 tests/   evals/prompt-tailor-cases.jsonl   outputs/(Git 管理外)

@@ -7,6 +7,7 @@ Claude Code で `/official-prompt-tailor` を呼ぶか、「このプロンプ�
 ```bash
 python3 .claude/skills/official-prompt-tailor/scripts/evidence.py fetch --input outputs/official-prompt-tailor/input-run-001.json --out outputs/official-prompt-tailor/run-001 --mode live
 python3 .claude/skills/official-prompt-tailor/scripts/evidence.py drift --run outputs/official-prompt-tailor/run-001   # 審査後に変わった資料の規則を確認(通信しない)
+python3 .claude/skills/official-prompt-tailor/scripts/evidence.py rules --run outputs/official-prompt-tailor/run-001   # この run で選べる規則だけを出す(registry.json は読まない)
 # 取得した snapshots/<id>/body.txt を Claude Code で読み、optimized.md と recommendations.json を書く
 python3 .claude/skills/official-prompt-tailor/scripts/evidence.py verify --run outputs/official-prompt-tailor/run-001 --mode live --host-log <ユーザーが指定した実行ログ>
 ```
