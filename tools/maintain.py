@@ -240,6 +240,16 @@ def route_gaps(reg):
     return reads, sorted({r["rule_id"] for r in reg["rules"]} - usable)
 
 
+def routing_problems(reg):
+    reads, unused = route_gaps(reg)
+    problems = []
+    for (tid, sid), inputs in sorted(reads.items()):
+        purposes = [p for p in ev.PURPOSES if any(i["purpose"] == p for i in inputs)]
+        problems.append(f"target {tid}: source {sid} is fetched but none of its rules applies, for purposes {purposes} ({len(inputs)} inputs, "
+                        f"e.g. surface {inputs[0]['target_surface']}, model {inputs[0]['model_id']}): route it only where its rules apply")
+    return problems + [f"rule {rid} applies to no input: no route fetches its source for its targets, purposes, surfaces and models" for rid in unused]
+
+
 def registry_problems(reg):
     """What the repository requires of a registry beyond validate_registry: no source without a route or a rule, a source fetched only
     where one of its rules applies and every rule usable by some input, every rule reviewed and complete, API advice kept to the API
@@ -248,12 +258,7 @@ def registry_problems(reg):
     routed = {i for t in reg["targets"] for i in t["required_sources"] + [x for c in t["conditional_sources"] for x in c["source_ids"]]}
     problems = [f"source {i} is not routed by any target" for i in sorted(set(sources) - routed)]
     problems += [f"source {i} has no rule" for i in sorted(set(sources) - {r["source_id"] for r in reg["rules"]})]
-    reads, unused = route_gaps(reg)
-    for (tid, sid), inputs in sorted(reads.items()):
-        purposes = [p for p in ev.PURPOSES if any(i["purpose"] == p for i in inputs)]
-        problems.append(f"target {tid}: source {sid} is fetched but none of its rules applies, for purposes {purposes} ({len(inputs)} inputs, "
-                        f"e.g. surface {inputs[0]['target_surface']}, model {inputs[0]['model_id']}): route it only where its rules apply")
-    problems += [f"rule {rid} applies to no input: no route fetches its source for its targets, purposes, surfaces and models" for rid in unused]
+    problems += routing_problems(reg)
     for r in reg["rules"]:
         s, rid = sources[r["source_id"]], r["rule_id"]
         if r["review_status"] != "reviewed":
