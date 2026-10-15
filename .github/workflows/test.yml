@@ -29,3 +29,6 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - run: python -m unittest discover -s tests
+      - name: ZIP sha256 (one commit gives one digest on every runner; docs/maintenance.md)
+        shell: bash
+        run: mkdir zip-out && python install.py --zip zip-out | grep '^sha256'

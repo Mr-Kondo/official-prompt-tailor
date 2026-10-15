@@ -251,6 +251,6 @@ mkdir <出力先> && python3 <空のディレクトリ>/install.py --zip <出力
 curl -s https://api.github.com/repos/Mr-Kondo/official-prompt-tailor/releases/tags/vX.Y.Z    # assets の digest が "sha256:…" で一致する
 ```
 
-- `install.py --zip` は、最後に `sha256:` を出すので、`release.yml` のログにも残ります。
+- `install.py --zip` は、最後に `sha256:` を出すので、`release.yml` のログにも残ります。`test.yml` も、コミットごとに同じ ZIP を作って `sha256:` を出します。同じコミットなら、10 ジョブのすべてで同じ値になります。
 - この方法で確かめられるのは、この変更を入れた後のリリースからです。それ以前の ZIP は、更新日時と圧縮が入っているため、作り直しても一致しません。
 - 一致しないときは、ZIP の中身(名前・サイズ・内容)を `unzip -l` と `diff -r` で比べます。ファイルの改行が CRLF になっていると一致しません(`.gitattributes` が LF に固定しているので、通常は起きません)。
