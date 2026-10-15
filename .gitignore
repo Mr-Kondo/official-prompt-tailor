@@ -3,3 +3,5 @@ dist/
 __pycache__/
 *.pyc
 .DS_Store
+# 設計資料。手元には残すが、追跡しない
+claude-code-implementation-prompt.md
