@@ -120,9 +120,11 @@ python3 tools/maintain.py propose --url https://code.claude.com/docs/en/memory.m
 
 - 人の判断が要る結果(`drift` の `DRIFT`、`discover` の `CANDIDATES`)だけが、`drift` または `discover` のラベルを付けた Issue になります。開いている Issue があれば、本文を最新の報告に置き換えます。
 - `INCOMPLETE`(取得できない資料や一覧がある)は、実行の Summary に出るだけで、Issue にはなりません。通信エラーは、再実行で解消することがあります。
-- 再審査(または既読化)が済んだら、Issue を閉じます。次の週に残っていれば、Issue は開き直されます。
+- 再審査(または既読化)が済んだら、Issue を閉じます。閉じた Issue は開き直しません。次の週にまだ残っていれば、新しい Issue を立てます。
 
 `.github/workflows/test.yml` は、push と pull request で、Ubuntu は Python 3.9〜3.14、macOS と Windows は 3.9 と 3.14 のテストを実行します。どの組み合わせが失敗しても、workflow は失敗になります。
+
+3 つの workflow の Ubuntu は、`ubuntu-24.04` に固定しています。`ubuntu-latest` が Ubuntu 26 へ移り始めるのが 2026-10-19 で、`watch.yml` の定期実行と同じ日だからです(`test.yml` には、Python 3.9 のビルドが Ubuntu 26.04 にない、という理由もあります)。外すのは、`ubuntu-latest` で手動実行(`watch.yml`)が通ったあとです。
 
 ## 意味審査
 

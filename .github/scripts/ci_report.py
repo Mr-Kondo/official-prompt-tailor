@@ -5,7 +5,7 @@
 
 Prints a Markdown report. With --issue, a result that needs a person (DRIFT / CANDIDATES) is also written to the
 one open issue that carries the label of that kind (an issue is opened when none is). The body is replaced, not
-appended to, so a week without action does not pile up comments, and a closed issue is simply opened again.
+appended to, so a week without action does not pile up comments. A closed issue stays closed: the next result opens a new one.
 """
 import json
 import subprocess

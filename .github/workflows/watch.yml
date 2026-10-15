@@ -13,8 +13,10 @@ permissions:
   issues: write
 
 jobs:
+  # Pinned like test.yml: ubuntu-latest starts moving to Ubuntu 26 on 2026-10-19, the day of a scheduled run.
+  # Unpin both jobs (and release.yml) once a manual run on ubuntu-latest has passed.
   drift:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
@@ -30,7 +32,7 @@ jobs:
         run: python3 -I .github/scripts/ci_report.py drift result.json --issue | tee -a "$GITHUB_STEP_SUMMARY"
 
   discover:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
