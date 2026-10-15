@@ -11,6 +11,7 @@ edits registry.json, and only with --write: which rules a page holds and what th
 spec (docs/maintenance.md); adopt checks the spec against the live page and records who reviewed. Standard library only.
 """
 import argparse
+import itertools
 import json
 import os
 import re
@@ -215,13 +216,44 @@ def dump_registry(reg):
     return "\n".join(lines) + "\n"
 
 
+def routing_inputs(reg):
+    """Every input that can be routed differently: each target and purpose, with each surface and model the registry names, and unknown."""
+    named = lambda key: {v for x in reg["sources"] + reg["rules"] for v in x[key]}  # noqa: E731
+    surfaces = named("surfaces") | {s for t in reg["targets"] for c in t["conditional_sources"] for s in c["surfaces"]}
+    for target, purpose, surface, model in itertools.product([t["target_id"] for t in reg["targets"]], ev.PURPOSES,
+                                                             ["unknown"] + sorted(surfaces - {"all"}), ["unknown"] + sorted(named("models") - {"all"})):
+        yield {"target_id": target, "purpose": purpose, "target_surface": surface, "model_id": model}
+
+
+def route_gaps(reg):
+    """Where routing and rules disagree, over every routing input: ({(target_id, source_id): [input, ...]}, [rule_id, ...]).
+    The first holds the inputs for which a source is selected and none of its rules applies: verify asks for a read of every selected
+    source, so that page is read for nothing. The second holds the rules that apply to no input."""
+    view = {**reg, "rules": [{**r, "review_status": "reviewed"} for r in reg["rules"]]}  # whether a rule is reviewed is another check
+    reads, usable = {}, set()
+    for inp in routing_inputs(view):
+        chosen = ev.select_sources(view, inp)
+        applicable = ev._applicable(view, inp, {"selected_sources": chosen})
+        usable |= {r["rule_id"] for r in applicable}
+        for sid in set(chosen) - {r["source_id"] for r in applicable}:
+            reads.setdefault((inp["target_id"], sid), []).append(inp)
+    return reads, sorted({r["rule_id"] for r in reg["rules"]} - usable)
+
+
 def registry_problems(reg):
-    """What the repository requires of a registry beyond validate_registry: no source without a route or a rule, every rule
-    reviewed and complete, API advice kept to the API surface, and a model's guide grounding only that model's rules."""
+    """What the repository requires of a registry beyond validate_registry: no source without a route or a rule, a source fetched only
+    where one of its rules applies and every rule usable by some input, every rule reviewed and complete, API advice kept to the API
+    surface, and a model's guide grounding only that model's rules."""
     sources = {s["source_id"]: s for s in reg["sources"]}
     routed = {i for t in reg["targets"] for i in t["required_sources"] + [x for c in t["conditional_sources"] for x in c["source_ids"]]}
     problems = [f"source {i} is not routed by any target" for i in sorted(set(sources) - routed)]
     problems += [f"source {i} has no rule" for i in sorted(set(sources) - {r["source_id"] for r in reg["rules"]})]
+    reads, unused = route_gaps(reg)
+    for (tid, sid), inputs in sorted(reads.items()):
+        purposes = [p for p in ev.PURPOSES if any(i["purpose"] == p for i in inputs)]
+        problems.append(f"target {tid}: source {sid} is fetched but none of its rules applies, for purposes {purposes} ({len(inputs)} inputs, "
+                        f"e.g. surface {inputs[0]['target_surface']}, model {inputs[0]['model_id']}): route it only where its rules apply")
+    problems += [f"rule {rid} applies to no input: no route fetches its source for its targets, purposes, surfaces and models" for rid in unused]
     for r in reg["rules"]:
         s, rid = sources[r["source_id"]], r["rule_id"]
         if r["review_status"] != "reviewed":
@@ -384,15 +416,10 @@ def count_table(reg):
 
 
 def model_table(reg):
-    """Per model: its guide, and the rules that name the model (the guide's own, and those of a source for every model)."""
-    rows = ["| `model_id` | 取得される、モデル別ガイド | 使える規則 |", "|---|---|---|"]
-    for s in reg["sources"]:
-        if s["models"] == ["all"]:
-            continue
-        for m in s["models"]:
-            others = [r["rule_id"] for r in reg["rules"] if r["source_id"] != s["source_id"] and m in r["models"]]
-            n = sum(1 for r in reg["rules"] if r["source_id"] == s["source_id"] and m in r["models"]) + len(others)
-            rows.append(f"| `{m}` | `{s['source_id']}` | {n} 件" + (f"({_ids(others)} を含む)" if others else "") + " |")
+    """Per model: the sources fetched only for it (its guide, and any other source whose rules name it), and the rules that name it."""
+    rows = ["| `model_id` | 取得される、モデル限定の資料 | 使える規則 |", "|---|---|---|"]
+    for m in sorted({m for s in reg["sources"] for m in s["models"]} - {"all"}):
+        rows.append(f"| `{m}` | {_ids(s['source_id'] for s in reg['sources'] if m in s['models'])} | {sum(1 for r in reg['rules'] if m in r['models'])} 件 |")
     return "\n".join(rows) + "\n"
 
 

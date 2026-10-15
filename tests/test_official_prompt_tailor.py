@@ -738,17 +738,24 @@ class TestRouting(unittest.TestCase):
         return ev.select_sources(self.reg, {"target_id": target, "purpose": purpose, "target_surface": surface, "model_id": model})
 
     def test_all_eleven_targets_have_expected_minimum_sources(self):
-        expect = {"chatgpt": ["openai-prompting"], "chatgpt-work": ["openai-prompting", "openai-work"],
-                  "codex": ["openai-prompting"], "claude": ["claude-chat-help"], "claude-cowork": ["claude-cowork-help"],
-                  "claude-code": ["claude-code-best-practices"], "gemini": [], "antigravity": [],
-                  "gemini-agent-app": ["gemini-tasks"], "gemini-cli": ["gemini-cli-memory"],
-                  "google-adk-agent": ["google-adk-instructions"]}
+        # a source is fetched only for the purposes its rules serve (registry_problems), so each target's main sources are asked for by purpose
+        expect = {"chatgpt": ("one-shot", ["openai-prompting"]), "chatgpt-work": ("one-shot", ["openai-prompting", "openai-work"]),
+                  "codex": ("one-shot", ["openai-prompting"]), "claude": ("one-shot", ["claude-chat-help"]),
+                  "claude-cowork": ("one-shot", ["claude-cowork-help"]), "claude-code": ("one-shot", ["claude-code-best-practices"]),
+                  "gemini": ("skill-instructions", ["gemini-app-skills"]), "antigravity": ("persistent-instructions", ["antigravity-rules"]),
+                  "gemini-agent-app": ("one-shot", ["gemini-tasks"]), "gemini-cli": ("persistent-instructions", ["gemini-cli-memory"]),
+                  "google-adk-agent": ("agent-instruction", ["google-adk-instructions"])}
         self.assertEqual(set(expect), set(ev.TARGET_IDS))
-        for target, want in expect.items():
+        for target, (purpose, want) in expect.items():
             with self.subTest(target):
-                # the required sources come first; one-shot also pulls the conditional sources that hold for every surface
-                self.assertEqual(self.route(target)[:len(want)], want)
+                self.assertLessEqual(set(want), set(self.route(target, purpose)))
         self.assertEqual(self.route("unresolved"), [])
+
+    def test_what_a_target_always_fetches_comes_first(self):
+        for t in self.reg["targets"]:
+            for purpose in ev.PURPOSES:
+                with self.subTest(target=t["target_id"], purpose=purpose):
+                    self.assertEqual(self.route(t["target_id"], purpose)[:len(t["required_sources"])], t["required_sources"])
 
     def test_conditional_sources_need_purpose_and_surface(self):
         cases = [("codex", "persistent-instructions", "unknown", "openai-agents-md"),
@@ -759,7 +766,6 @@ class TestRouting(unittest.TestCase):
                  ("antigravity", "persistent-instructions", "unknown", "antigravity-rules"),
                  ("antigravity", "skill-instructions", "unknown", "antigravity-skills"),
                  ("gemini-cli", "skill-instructions", "unknown", "gemini-cli-skills"),
-                 ("claude-code", "one-shot", "api", "claude-model-prompting"),
                  ("chatgpt", "one-shot", "api", "openai-api-prompting")]
         for target, purpose, surface, sid in cases:
             with self.subTest(target=target, purpose=purpose):
@@ -775,13 +781,15 @@ class TestRouting(unittest.TestCase):
                 self.assertNotIn(sid, self.route(target, purpose, surface))
 
     def test_a_source_limited_to_a_model_is_fetched_only_for_that_model(self):
-        # the Opus 5.5 guide is routed for every Claude API run, but its rules apply to claude-opus-5-5 alone
-        for model, has_opus, has_sonnet in (("claude-opus-5-5", True, False), ("claude-sonnet-5-5", False, True),
-                                            ("claude-opus-4-0", False, False), ("unknown", False, False)):
+        # the Opus 5.5 guide is routed for every Claude API run, but its rules apply to claude-opus-5-5 alone; the general
+        # claude-model-prompting has one rule, which names four models, so it goes to those four and to no other model
+        for model, has_opus, has_sonnet, has_general in (("claude-opus-5-5", True, False, True), ("claude-sonnet-5-5", False, True, True),
+                                                         ("claude-opus-5", False, False, False), ("claude-opus-4-0", False, False, False),
+                                                         ("unknown", False, False, False)):
             with self.subTest(model=model):
                 got = self.route("claude", "one-shot", "api", model)
-                self.assertEqual(("claude-prompting-opus-5-5" in got, "claude-prompting-sonnet-5-5" in got), (has_opus, has_sonnet))
-                self.assertIn("claude-model-prompting", got)  # a source for all models is kept
+                self.assertEqual(("claude-prompting-opus-5-5" in got, "claude-prompting-sonnet-5-5" in got, "claude-model-prompting" in got),
+                                 (has_opus, has_sonnet, has_general))
         self.assertNotIn("claude-prompting-opus-5-5", self.route("claude", "one-shot", "unknown", "claude-opus-5-5"))  # surface still decides
 
     def all_inputs(self):
@@ -1693,12 +1701,12 @@ class TestSourcesPlan(unittest.TestCase):
     def test_the_guide_of_the_given_model_is_chosen_and_the_others_are_left_out_for_the_model(self):
         rep = self.plan()
         status = {g["source_id"]: g["status"] for g in rep["model"]["guides"]}
-        self.assertEqual(status.pop("claude-prompting-opus-5-5"), "selected")
-        self.assertEqual((set(status.values()), len(status)), ({"skipped"}, 7))
+        chosen = {"claude-prompting-opus-5-5", "claude-model-prompting"}  # the model's guide, and the general guide whose only rule names the model
+        self.assertEqual({sid for sid, s in status.items() if s == "selected"}, chosen)
+        self.assertEqual(({s for sid, s in status.items() if sid not in chosen}, len(status) - len(chosen)), ({"skipped"}, 7))
         self.assertEqual({g["reason"] for g in rep["model"]["guides"] if g["status"] == "skipped"}, {"model_mismatch"})
-        self.assertIn("claude-prompting-opus-5-5", [x["source_id"] for x in rep["selected"]])
-        self.assertIn("claude-model-prompting", [x["source_id"] for x in rep["selected"]])  # a source for every model stays
-        self.assertEqual(rep["model"]["model_specific_sources"], 8)
+        self.assertTrue(chosen <= {x["source_id"] for x in rep["selected"]})
+        self.assertEqual(rep["model"]["model_specific_sources"], 9)
 
     def test_without_a_model_or_the_api_surface_no_guide_is_chosen_and_the_reason_says_which(self):
         no_model = self.plan(model="unknown")
@@ -1718,7 +1726,11 @@ class TestSourcesPlan(unittest.TestCase):
     def test_all_models_lists_what_each_model_adds_to_the_common_sources(self):
         limited = {s["source_id"]: s["models"] for s in self.reg["sources"] if s["models"] != ["all"]}
         rep = self.plan(model="unknown", all_models=True)
-        self.assertEqual(rep["models"]["added"], {m: [sid] for sid, models in limited.items() for m in models})
+        expected = {}
+        for sid, models in limited.items():
+            for m in models:
+                expected.setdefault(m, set()).add(sid)  # a model has its guide, and any other source whose rules name it
+        self.assertEqual({m: set(added) for m, added in rep["models"]["added"].items()}, expected)
         self.assertFalse(set(limited) & set(rep["models"]["base"]))
         by_ui = self.plan(surface="unknown", all_models=True)["models"]["added"]
         self.assertEqual({m: a for m, a in by_ui.items() if a}, {})  # off the API surface, no model changes the sources
@@ -1728,7 +1740,7 @@ class TestSourcesPlan(unittest.TestCase):
         self.assertIn("# 見る資料の計画", text)
         self.assertIn("綴りが違うかもしれません。登録されている ID: `claude-opus-5-5`", text)
         self.assertIn("| `claude-prompting-opus-5-5` | `claude-opus-5-5` | モデルが違います(入力: `claude-opus-5-5-20261001`) |", text)
-        self.assertIn("| `claude-opus-5-5` | `claude-prompting-opus-5-5` |", text)
+        self.assertIn("| `claude-opus-5-5` | `claude-model-prompting`、`claude-prompting-opus-5-5` |", text)
         text = ev.render_sources(self.plan("codex", "api", "gpt-5"))
         self.assertIn("モデル別の資料がありません。`model_id` を変えても、選ばれる資料は変わりません", text)
 
@@ -1737,7 +1749,7 @@ class TestSourcesPlan(unittest.TestCase):
         self.assertIn("`model_id`=`unknown` で、選ばれたものはありません。", text)
         self.assertEqual(text.count("`claude-prompting-opus-5-5`"), 1)  # in the model section; not again among the sources the route left out
         self.assertIn("モデル別の資料を除く。経路に合わないもの", text)
-        self.assertIn("で、選ばれたのは `claude-prompting-opus-5-5` です。", ev.render_sources(self.plan()))
+        self.assertIn("で、選ばれたのは `claude-model-prompting`、`claude-prompting-opus-5-5` です。", ev.render_sources(self.plan()))
 
 
 class TestSourcesRun(Base):

@@ -124,7 +124,8 @@ python3 tools/maintain.py docs --write
   - 本文が、2 回の取得で一致すること(最大 6 回まで取り直します。失敗した取得は数えません)。
   - 各規則の `source_excerpt` が、取得した本文にそのまま現れ、400 文字以内であること。規則の `target_ids` が資料の範囲内であること。
   - API 限定の資料の規則は、`surfaces` が `["api"]` であること。モデル限定の資料の規則は、`models` がその資料の `models` に含まれること。ほかの検査(`registry_problems`)も通ること。
-- `adopt` が書くのは、`source_body_sha256`(取得した本文)、`reviewed_at`、`reviewer_id`、`review_status: reviewed`、`source_locator`(= 引用)と、`targets` への経路です。経路は、規則の `purposes` の和集合に対してだけ作ります。規則のない `purpose` では、その資料は取得されません。
+  - 経路と規則が合っていること(`registry_problems`)。利用先 × `purpose` × `target_surface` × `model_id` の全入力(約 1,200 通り)について、選ばれた資料に、その入力で使える規則が 1 件以上あること。どの入力でも使えない規則がないこと。`verify` は、選ばれた資料のすべてを読んだことを求めるので、規則のない入力で資料を取得すると、読むだけで終わります。
+- `adopt` が書くのは、`source_body_sha256`(取得した本文)、`reviewed_at`、`reviewer_id`、`review_status: reviewed`、`source_locator`(= 引用)と、`targets` への経路です。経路は、規則の `purposes` の和集合に対してだけ作ります。規則のない `purpose` では、その資料は取得されません。規則がすべて特定のモデルに限られる資料は、`models` にもそのモデルを書きます(書かないと、ほかのモデルでも取得され、`registry_problems` が拒否します)。`registry_problems` がエラーを出したら、spec の `purposes`・`surfaces`・`models` を、資料が実際に使われる範囲に直します。
 - Claude Code のサンドボックスは、`.claude/skills` の下に書けません。`--write` が `Operation not permitted` で止まるときは、ターミナルで実行します。
 
 #### 手で足す場合
@@ -143,7 +144,7 @@ python3 tools/maintain.py docs --write
      - `html-body-v1`: `<body>`
      - `markdown-v1`: Markdown かプレーンテキスト
    - `body_locators`: 本文に必ず含まれる見出しなどの文字列を、2 件以上。見つからないと、`fetch` は `locators_missing` で `blocked` にします。
-3. `targets` の `required_sources` か `conditional_sources` に、`source_id` を加えます。`required_sources` は常に取得され、`conditional_sources` は `purposes` と `surfaces` が合うときだけ取得されます。
+3. `targets` の `required_sources` か `conditional_sources` に、`source_id` を加えます。`required_sources` は常に取得され、`conditional_sources` は `purposes` と `surfaces` が合うときだけ取得されます。規則のある範囲にだけ経路を作ります。`required_sources` に置けるのは、その利用先のすべての `purpose` に使える規則を持つ資料だけです(`registry_problems` が確かめます)。
 4. `fetch` で取得します。`blocked` にならないこと、`snapshots/<id>/body.txt` が本文だけになっていることを確かめます。
 5. `rules` に規則を足します。既存の規則をひな形にし、全キーを埋めます。
    - 最初は `review_status` を `unreviewed` にします。`source_body_sha256`・`reviewed_at`・`reviewer_id` は `null` です。

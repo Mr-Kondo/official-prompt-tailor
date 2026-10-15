@@ -201,6 +201,7 @@ class TestRegistryRules(unittest.TestCase):
         cases = {
             "a source nobody routes and no rule reads": (lambda reg: reg["sources"].append({**reg["sources"][0], "source_id": "orphan"}),
                                                           ["source orphan is not routed by any target", "source orphan has no rule"]),
+            # the routing check asks where a rule would apply, not whether it is reviewed: no second message about a source left without a rule
             "an unreviewed rule": (lambda reg: rule(reg, api_rule).update(review_status="unreviewed"), [f"rule {api_rule} is not reviewed"]),
             "a rule without exclusions": (lambda reg: rule(reg, api_rule).update(exclusions=[]), [f"rule {api_rule} lacks preconditions or exclusions"]),
             "API advice offered to every surface": (lambda reg: rule(reg, api_rule).update(surfaces=["all"]),
@@ -212,6 +213,43 @@ class TestRegistryRules(unittest.TestCase):
             with self.subTest(name):
                 self.assertEqual(self.problems_after(change), want)
 
+    def one_purpose_source(self):
+        """(target_id, source_id): a source that one route fetches for one purpose, where its rules for that target serve that purpose alone."""
+        for t in self.reg["targets"]:
+            for route in t["conditional_sources"]:
+                for sid in route["source_ids"] if len(route["purposes"]) == 1 and route["purposes"] != ["all"] else []:
+                    routes = sum(sid in c["source_ids"] for c in t["conditional_sources"]) + (sid in t["required_sources"])
+                    served = {p for r in self.reg["rules"] if r["source_id"] == sid and t["target_id"] in r["target_ids"] for p in r["purposes"]}
+                    if routes == 1 and served == set(route["purposes"]):
+                        return t["target_id"], sid
+        self.fail("the registry has no source fetched for one purpose only")
+
+    def test_a_source_fetched_where_none_of_its_rules_applies_is_named(self):
+        tid, sid = self.one_purpose_source()
+        guide = next(s["source_id"] for s in self.reg["sources"] if s["models"] != ["all"])
+
+        def fetch_for_every_purpose(reg):
+            for route in next(t for t in reg["targets"] if t["target_id"] == tid)["conditional_sources"]:
+                if sid in route["source_ids"]:
+                    route["purposes"] = ["all"]
+        problems = self.problems_after(fetch_for_every_purpose)
+        self.assertIn(f"target {tid}: source {sid} is fetched but none of its rules applies", " ".join(problems))
+        # a guide for certain models, fetched for every model, is read for the others
+        problems = self.problems_after(lambda reg: next(s for s in reg["sources"] if s["source_id"] == guide).update(models=["all"]))
+        self.assertTrue(problems and all(f"source {guide} is fetched but none of its rules applies" in p for p in problems), problems)
+
+    def test_a_rule_that_no_route_lets_any_input_use_is_named(self):
+        tid, sid = self.one_purpose_source()
+        served = next(r["purposes"] for r in self.reg["rules"] if r["source_id"] == sid and tid in r["target_ids"])
+        other = next(p for p in ev.PURPOSES if p not in served)
+
+        def add_rule_for_another_purpose(reg):
+            rule = copy.deepcopy(next(r for r in reg["rules"] if r["source_id"] == sid and tid in r["target_ids"]))
+            reg["rules"].append({**rule, "rule_id": "orphan-rule", "target_ids": [tid], "purposes": [other]})
+        problems = self.problems_after(add_rule_for_another_purpose)
+        self.assertEqual(len(problems), 1, problems)
+        self.assertTrue(problems[0].startswith("rule orphan-rule applies to no input"), problems)
+
 
 class AdoptBase(MaintainBase):
     """A registry in the writer's layout that already meets the repository's rules, and a page to adopt."""
@@ -220,8 +258,11 @@ class AdoptBase(MaintainBase):
 
         def tidy(reg):
             reg["rules"] = [r for r in reg["rules"] if r["rule_id"] != "rule-unreviewed"]
-            reg["rules"].append({**next(r for r in reg["rules"] if r["rule_id"] == "rule-verify"), "rule_id": "rule-md",
-                                 "source_id": "doc-md", "target_ids": ["claude-code"]})
+            by_id = lambda rid: next(r for r in reg["rules"] if r["rule_id"] == rid)  # noqa: E731
+            # doc-a is fetched for every purpose and doc-api for every purpose on the api surface: each needs a rule for the purposes it had none for
+            reg["rules"] += [{**by_id("rule-verify"), "rule_id": "rule-md", "source_id": "doc-md", "target_ids": ["claude-code"]},
+                             {**by_id("rule-verify"), "rule_id": "rule-standing", "purposes": ["persistent-instructions", "agent-instruction"]},
+                             {**by_id("rule-api"), "rule_id": "rule-api-more", "purposes": ["persistent-instructions", "skill-instructions", "agent-instruction"]}]
         self.set_registry(tidy)
         ev.REGISTRY_PATH.write_bytes(maintain.dump_registry(json.loads(ev.REGISTRY_PATH.read_text(encoding="utf-8"))).encode("utf-8"))
         self.before = ev.REGISTRY_PATH.read_bytes()
@@ -253,7 +294,7 @@ class TestAdopt(AdoptBase):
     def test_a_dry_run_checks_everything_and_writes_nothing(self):
         code, out, err = self.tool("adopt", "--spec", self.spec())
         rep = json.loads(out)
-        self.assertEqual((code, rep["written"], rep["registry"]["sources"], rep["registry"]["rules"]), (0, False, 4, 9))
+        self.assertEqual((code, rep["written"], rep["registry"]["sources"], rep["registry"]["rules"]), (0, False, 4, 11))
         self.assertIn("dry run: nothing written", err)
         self.assertEqual(ev.REGISTRY_PATH.read_bytes(), self.before)
 
@@ -566,7 +607,7 @@ class TestDocs(DocsBase):
     def test_stale_numbers_and_tables_are_found_and_refreshed(self):
         before = {n: p.read_bytes() for n, p in self.paths.items()}
         self.edit("README_PATH", "審査済み規則(", "審査済み規則(1")
-        self.edit("TARGETS_PATH", "| 4 | 1 | 2 | 0 |", "| 9 | 1 | 2 | 0 |")  # a cell of the rule-count table
+        self.edit("TARGETS_PATH", "| 4 | 1 | 2 | ", "| 9 | 1 | 2 | ")  # cells of the rule-count table
         self.edit("TARGETS_PATH", "モデルを限定した規則は ", "モデルを限定した規則は 1")
         self.edit("TRUST_PATH", "人の審査は ", "人の審査は 7")
         code, out, err = self.tool("docs")
@@ -580,11 +621,11 @@ class TestDocs(DocsBase):
     def test_a_document_that_lacks_a_block_or_a_number_is_a_problem_and_nothing_is_written(self):
         self.edit("TARGETS_PATH", "<!-- generated:rule-counts end -->", "")
         self.edit("README_PATH", "資料(", "資料数(")
-        self.edit("TARGETS_PATH", "| 4 | 1 | 2 | 0 |", "| 9 | 1 | 2 | 0 |")
+        self.edit("TARGETS_PATH", "| 4 | 1 | 2 | ", "| 9 | 1 | 2 | ")
         code, out, _ = self.tool("docs", "--write")
         rep = json.loads(out)
         self.assertEqual((code, rep["written"], len(rep["problems"])), (1, False, 2))  # the unmatched number, and the block the document lacks the end of
-        self.assertIn("| 9 | 1 | 2 | 0 |", self.paths["TARGETS_PATH"].read_text(encoding="utf-8"))  # the stale cell was left alone
+        self.assertIn("| 9 | 1 | 2 | ", self.paths["TARGETS_PATH"].read_text(encoding="utf-8"))  # the stale cell was left alone
 
     def test_a_target_the_docs_do_not_know_is_refused_rather_than_left_out(self):
         for name in ("ROUTING_LABELS", "VENDORS"):
