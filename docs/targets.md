@@ -88,7 +88,7 @@
 <!-- generated:rule-counts end -->
 
 - 数字: その `purpose` で使える `official` 規則の件数です。資料は、その規則が使える入力にだけ取得されるので、資料が取得されるのに使える規則が 0 件、という組み合わせは作れません。
-- `資料なし`: 取得される資料がありません。使える `official` 規則がないからです。`fetch` は 0 で終わり、`verify` が `no_applicable_official_source` で `INCOMPLETE` にします。変更は `editorial` か `inference` になり、「検証済み」とは言えません。`target_surface` や `model_id` を指定すると、資料と規則が加わることがあります(次の節)。
+- `資料なし`: 取得される資料がありません。使える `official` 規則がないからです。`fetch` は 0 で終わり、`verify` が `no_applicable_official_source` で `INCOMPLETE` にします。変更は `editorial` か `inference` になり、「検証済み」とは言えません。`target_surface` や `model_id` を指定すると、資料と規則が加わることがあります(次の節)。手順は、SKILL.md と証拠契約(`references/evidence-contract.md`)の「資料が 0 件」にあります。
 
 ## `api` と `model_id` を指定すると
 

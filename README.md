@@ -12,8 +12,8 @@
   references/registry.json       資料(50)・対象(11)・審査済み規則(104)
   references/evidence-contract.md / review-rubric.md
   scripts/evidence.py            fetch / verify / assess / compare / drift / rules / sources(標準ライブラリのみ)
-tools/maintain.py                保守用(スキルには同梱しない): discover / propose / adopt / docs / audit
-.github/workflows/               test(Python 3.9〜3.14)・watch(週次の drift と discover)・release
+tools/maintain.py                保守用(スキルには同梱しない): discover / propose / adopt / rereview / review / docs / audit
+.github/workflows/               test(Python 3.9〜3.15)・watch(週次の drift と discover)・release
 tests/   evals/prompt-tailor-cases.jsonl   outputs/(Git 管理外)
 ```
 

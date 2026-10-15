@@ -8,6 +8,8 @@
     {"index_id": "chatgpt-learn", "url": "https://learn.chatgpt.com/docs/llms.txt", "scope": ["/docs/", "/guides/"]},
     {"index_id": "gemini-cli-docs", "url": "https://geminicli.com/llms.txt", "scope": ["/docs/"]},
     {"index_id": "adk-docs", "url": "https://adk.dev/llms.txt", "scope": ["/agents/", "/skills/"]},
-    {"index_id": "antigravity-docs", "url": "https://antigravity.google/llms.txt", "scope": ["/docs/"]}
+    {"index_id": "antigravity-docs", "url": "https://antigravity.google/llms.txt", "scope": ["/docs/"]},
+    {"index_id": "openai-developers-sitemap", "format": "sitemap", "url": "https://developers.openai.com/sitemap.xml", "scope": ["/api/docs/guides/"]},
+    {"index_id": "gemini-api-sitemap", "format": "sitemap", "url": "https://ai.google.dev/sitemap.xml", "scope": ["/gemini-api/docs/"]}
   ]
 }

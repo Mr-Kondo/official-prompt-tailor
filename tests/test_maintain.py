@@ -7,13 +7,14 @@ import shutil
 import sys
 import tempfile
 import unittest
+import urllib.parse
 from pathlib import Path
 from unittest import mock
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 import maintain  # noqa: E402
-from test_official_prompt_tailor import A_URL, API_URL, HTML, ROOT, SKILL, Base, codes, ev, sha  # noqa: E402
+from test_official_prompt_tailor import A_URL, API_URL, HTML, NO_SOURCE_CHANGES, NO_SOURCE_OPT, ROOT, SKILL, Base, codes, ev, sha  # noqa: E402
 
 INDEX_URL, NEW_URL, NEW_MD = "https://docs.example.com/llms.txt", "https://docs.example.com/new-guide", "https://docs.example.com/new-notes.md"
 SECOND_URL = "https://docs.example.com/second-guide"
@@ -32,6 +33,20 @@ LLMS = """# Example Docs
 - [External prompting](https://other.example.org/docs/prompting.md): another host
 - [Blog prompt tips](https://docs.example.com/blog/prompt-tips.md): outside the scope
 """
+
+SITEMAP_URL, CHILD_URL, CHILD_URL_2 = "https://docs.example.com/sitemap.xml", "https://docs.example.com/sitemap-docs.xml", "https://docs.example.com/sitemap-more.xml"
+XML = {"content-type": "application/xml; charset=utf-8"}
+SITEMAP_INDEX = ("<?xml version=\"1.0\" encoding=\"UTF-8\"?><sitemapindex xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">"
+                 f"<sitemap><loc>{CHILD_URL}</loc></sitemap><sitemap><loc>{CHILD_URL_2}</loc></sitemap>"
+                 "<sitemap><loc>https://other.example.org/sitemap.xml</loc></sitemap></sitemapindex>")
+URLSET_DOCS = ("<?xml version=\"1.0\"?><urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">"
+               "<url><loc>https://docs.example.com/docs/prompting-guide</loc></url>"
+               "<url><loc>https://docs.example.com/docs/billing</loc></url>"
+               "<url><loc>https://docs.example.com/guide</loc></url>"  # registered
+               "<url><loc>http://docs.example.com/docs/system-prompts?hl=en</loc></url>"
+               "<url><loc>https://other.example.org/docs/prompting</loc></url></urlset>")
+URLSET_MORE = ("<urlset><url><loc> https://docs.example.com/docs/memory-tips &amp; </loc></url>"
+               "<url><loc>https://docs.example.com/docs/prompting-guide</loc></url></urlset>")  # the first page is listed in the other file too
 
 
 class MaintainBase(Base):
@@ -122,6 +137,104 @@ class TestDiscover(MaintainBase):
         self.assertEqual(self.tool("discover")[0], 1)
         self.cfg.unlink()
         self.assertEqual(self.tool("discover")[0], 2)
+
+
+    def sitemap_config(self, **over):
+        self.write_config(indexes=[{"index_id": "example-sitemap", "format": "sitemap", "url": SITEMAP_URL, "scope": ["/docs/", "/guide"], **over}])
+
+    def serve_sitemaps(self, index=SITEMAP_INDEX, docs=URLSET_DOCS, more=URLSET_MORE):
+        for url, body in ((SITEMAP_URL, index), (CHILD_URL, docs), (CHILD_URL_2, more)):
+            self.responses[url] = (200, XML, body.encode("utf-8"))
+
+    def test_a_site_without_llms_txt_is_read_from_its_sitemap_and_the_child_sitemaps_it_lists(self):
+        self.sitemap_config()
+        self.serve_sitemaps()
+        code, out, _ = self.tool("discover")
+        rep = json.loads(out)
+        row = rep["indexes"][0]
+        self.assertEqual((code, rep["verdict"], row["status"], row["error"]), (2, "CANDIDATES", "live", None))
+        self.assertEqual(row["skipped"], ["https://other.example.org/sitemap.xml"])  # left alone on purpose, and said so
+        # billing has no keyword, /guide is registered, the other host is not ours; http and the query are one page; a page in two files is listed once
+        self.assertEqual(self.keys(rep), ["docs.example.com/docs/memory-tips &", "docs.example.com/docs/prompting-guide", "docs.example.com/docs/system-prompts"])
+        titles = {c["key"]: c["title"] for c in row["candidates"]}
+        self.assertEqual(titles["docs.example.com/docs/prompting-guide"], "prompting guide")  # a sitemap has no titles: the last segment
+        self.assertEqual({c["url"] for c in row["candidates"] if c["key"].endswith("system-prompts")}, {"https://docs.example.com/docs/system-prompts?hl=en"})
+        self.assertEqual(self.calls, [SITEMAP_URL, CHILD_URL, CHILD_URL_2])  # the child on another host is never asked for
+
+    def test_a_sitemap_that_lists_pages_directly_needs_no_children(self):
+        self.sitemap_config()
+        self.responses[SITEMAP_URL] = (200, XML, URLSET_DOCS.encode("utf-8"))
+        rep = json.loads(self.tool("discover")[1])
+        self.assertEqual((self.keys(rep), self.calls), (["docs.example.com/docs/prompting-guide", "docs.example.com/docs/system-prompts"], [SITEMAP_URL]))
+
+    def test_a_child_that_cannot_be_read_is_named_and_the_others_are_still_listed(self):
+        self.sitemap_config()
+        self.serve_sitemaps()
+        self.responses[CHILD_URL] = (404, XML, b"")
+        code, out, _ = self.tool("discover")
+        rep = json.loads(out)
+        row = rep["indexes"][0]
+        self.assertEqual((code, rep["verdict"], row["status"]), (2, "CANDIDATES", "partial"))
+        self.assertIn(f"{CHILD_URL}: http_404", row["error"])
+        self.assertEqual(self.keys(rep), ["docs.example.com/docs/memory-tips &", "docs.example.com/docs/prompting-guide"])
+        self.responses[CHILD_URL_2] = (404, XML, b"")
+        self.write_config(indexes=[{"index_id": "example-sitemap", "format": "sitemap", "url": SITEMAP_URL, "scope": ["/docs/"]}])
+        self.assertEqual(json.loads(self.tool("discover")[1])["verdict"], "INCOMPLETE")  # nothing found and not everything read
+
+    def test_a_refusal_is_reported_as_it_is_and_nothing_gets_past_it(self):
+        self.sitemap_config()
+        self.responses[SITEMAP_URL] = (403, {"content-type": "text/plain"}, b"Forbidden")
+        code, out, _ = self.tool("discover")
+        rep = json.loads(out)
+        self.assertEqual((code, rep["verdict"], rep["indexes"][0]["status"], rep["indexes"][0]["error"]), (2, "INCOMPLETE", "blocked", "http_403"))
+        self.assertEqual(self.calls, [SITEMAP_URL, SITEMAP_URL])  # the same address, asked twice as for any index; no other address, no other way
+
+    def test_what_is_not_a_sitemap_is_refused(self):
+        self.sitemap_config()
+        for name, reply in {"html": (200, HTML, b"<html><body><urlset><loc>https://docs.example.com/docs/prompting</loc></urlset></body></html>"),
+                            "not xml at all": (200, XML, b"hello"), "no addresses": (200, XML, b"<urlset></urlset>"),
+                            "gzip": (200, {"content-type": "application/gzip"}, b"\x1f\x8b\x08"), "not utf-8": (200, XML, b"<urlset>\xff\xfe</urlset>"),
+                            "other charset": (200, {"content-type": "application/xml; charset=iso-8859-1"}, URLSET_DOCS.encode("utf-8"))}.items():
+            with self.subTest(name):
+                self.responses[SITEMAP_URL] = reply
+                row = json.loads(self.tool("discover")[1])["indexes"][0]
+                self.assertEqual((row["status"], row["candidates"]), ("blocked", []))
+
+    def test_an_entity_in_a_sitemap_is_not_expanded(self):
+        self.sitemap_config()
+        bomb = ('<?xml version="1.0"?><!DOCTYPE lolz [<!ENTITY lol "https://docs.example.com/docs/prompting-bomb"><!ENTITY lol2 "&lol;&lol;&lol;&lol;">]>'
+                "<urlset><url><loc>&lol2;</loc></url><url><loc>https://docs.example.com/docs/prompting-real</loc></url></urlset>")
+        self.responses[SITEMAP_URL] = (200, XML, bomb.encode("utf-8"))
+        self.assertEqual(self.keys(json.loads(self.tool("discover")[1])), ["docs.example.com/docs/prompting-real"])
+
+    def test_an_index_inside_an_index_and_too_many_children_are_reported_not_followed(self):
+        self.sitemap_config()
+        nested = SITEMAP_INDEX.replace("https://other.example.org/sitemap.xml", "https://docs.example.com/sitemap-nested.xml")
+        self.serve_sitemaps(index=nested)
+        self.responses["https://docs.example.com/sitemap-nested.xml"] = (200, XML, SITEMAP_INDEX.encode("utf-8"))
+        row = json.loads(self.tool("discover")[1])["indexes"][0]
+        self.assertEqual(row["status"], "partial")
+        self.assertIn("a sitemap index inside a sitemap index is not followed", row["error"])
+        self.assertNotIn("https://docs.example.com/sitemap-nested.xml" + "x", self.calls)
+        many = "<sitemapindex>" + "".join(f"<sitemap><loc>https://docs.example.com/s-{i}.xml</loc></sitemap>" for i in range(maintain.MAX_CHILD_SITEMAPS + 4)) + "</sitemapindex>"
+        self.responses[SITEMAP_URL] = (200, XML, many.encode("utf-8"))
+        self.calls.clear()
+        row = json.loads(self.tool("discover")[1])["indexes"][0]
+        self.assertIn("4 child sitemaps beyond the first 30 were not read", row["error"])
+        self.assertEqual(len(set(self.calls) - {SITEMAP_URL}), maintain.MAX_CHILD_SITEMAPS)
+
+    def test_the_format_of_an_index_is_checked(self):
+        self.write_config(indexes=[{"index_id": "example-sitemap", "format": "rss", "url": SITEMAP_URL, "scope": ["/docs/"]}])
+        code, _, err = self.tool("discover")
+        self.assertEqual(code, 1)
+        self.assertIn("format must be one of", err)
+
+    def test_the_shipped_config_names_a_sitemap_for_each_site_without_llms_txt(self):
+        cfg = ev.load_json(ROOT / "tools" / "discovery.json")
+        sitemaps = {urllib.parse.urlsplit(i["url"]).hostname for i in cfg["indexes"] if i.get("format") == "sitemap"}
+        self.assertEqual(sitemaps, {"developers.openai.com", "ai.google.dev"})
+        for i in cfg["indexes"]:
+            self.assertIn(i.get("format", "llms"), maintain.FORMATS)
 
 
 class TestPropose(MaintainBase):
@@ -382,6 +495,301 @@ class TestAdopt(AdoptBase):
         self.assertEqual(self.calls, [])
 
 
+class RereviewBase(AdoptBase):
+    """A registry whose rules were reviewed against the fixture page, and a page that can be changed afterwards."""
+    def setUp(self):
+        super().setUp()
+        for p in (mock.patch.object(maintain, "STORE", self.tmp / "store"), mock.patch.object(maintain, "ROOT", self.tmp),
+                  mock.patch.object(maintain, "LEDGER", self.tmp / "human-reviews.json")):
+            p.start()
+            self.addCleanup(p.stop)
+
+    SRC = ["doc-a", "doc-api"]  # the sources the fixture page stands for; doc-md's rule cites text its page never had
+    SRC_ARGS = ["--source", "doc-a", "--source", "doc-api"]
+
+    def look(self, **kw):
+        return maintain.rereview(only=kw.pop("only", self.SRC), context=kw.pop("context", 1), **kw)
+
+    def change_page(self, old, new):
+        page = self.page.replace(old, new)
+        self.assertNotEqual(page, self.page)
+        self.responses[A_URL] = self.responses[API_URL] = (200, HTML, page)
+        return page
+
+    def sha_now(self, sid):
+        src = self.source_of(sid)
+        return ev.sha_bytes(ev.process_body(src, self.responses[src["allowed_urls"][0]][2], "text/html").encode("utf-8"))
+
+    def source_of(self, sid):
+        return next(s for s in ev.load_registry()[0]["sources"] if s["source_id"] == sid)
+
+    def rules_of(self, sid="doc-a"):
+        return {r["rule_id"]: r for r in ev.load_registry()[0]["rules"] if r["source_id"] == sid}
+
+    def rows(self, rep):
+        return {r["rule_id"]: r["class"] for r in rep["rules"]}
+
+
+class TestRereview(RereviewBase):
+    FAR = (b"tests/test_date.py", b"tests/test_dates.py")  # the last line of the page: not next to the excerpts
+    NEAR = (b"a screenshot to compare.", b"a screenshot to compare, unless it is trivial.")  # inside the paragraph that holds the excerpt
+
+    def test_a_page_that_is_unchanged_has_nothing_to_renew_and_its_bodies_are_kept(self):
+        rep = self.look()
+        self.assertEqual((rep["verdict"], rep["rules"], rep["bodies_kept"] > 0), ("CURRENT", [], True))
+        self.assertEqual(self.look()["bodies_kept"], 0)  # kept once
+        self.assertEqual(ev.REGISTRY_PATH.read_bytes(), self.before)
+
+    def test_a_page_that_changed_elsewhere_is_renewed_against_the_body_kept_earlier(self):
+        self.look()  # the look before the change keeps the body the rules were reviewed against
+        self.change_page(*self.FAR)
+        rep = self.look()
+        self.assertEqual(rep["verdict"], "READY_TO_STAMP")
+        self.assertEqual(set(self.rows(rep).values()), {"context_unchanged"})
+        self.assertEqual(ev.REGISTRY_PATH.read_bytes(), self.before)  # a dry run
+        hunk = rep["sources"][0]["changes"][0]["hunks"][0]
+        self.assertEqual((hunk["removed"], hunk["added"]), (["  tests/test_date.py"], ["  tests/test_dates.py"]))  # what changed is shown
+        code, out, err = self.tool("rereview", *self.SRC_ARGS, "--context", "1", "--write")
+        rep = json.loads(out)
+        self.assertEqual((code, rep["verdict"], rep["written"], rep["reviewer_id"]), (0, "STAMPED", True, maintain.MACHINE_REVIEWER))
+        self.assertIn("written", err)
+        after = ev.REGISTRY_PATH.read_bytes()
+        self.assertEqual(maintain.dump_registry(json.loads(after.decode("utf-8"))).encode("utf-8"), after)  # the writer's own layout
+        for sid in ("doc-a", "doc-api"):
+            for r in self.rules_of(sid).values():
+                self.assertEqual((r["reviewer_id"], r["source_body_sha256"] == self.sha_now(sid)), (maintain.MACHINE_REVIEWER, True))
+        self.assertEqual(self.rules_of("doc-md")["rule-md"]["reviewer_id"], "unit-test")  # a rule of a page that did not change is left as it was
+        self.assertEqual(ev.drift(None, self.SRC)["verdict"], "CURRENT")
+        self.assertEqual(self.look()["verdict"], "CURRENT")
+
+    def test_a_change_next_to_the_excerpt_is_left_to_a_person_and_shown(self):
+        self.look()
+        self.change_page(*self.NEAR)
+        code, out, _ = self.tool("rereview", *self.SRC_ARGS, "--context", "1", "--write")
+        rep = json.loads(out)
+        self.assertEqual((code, rep["verdict"], rep["written"]), (2, "NEEDS_REVIEW", False))
+        self.assertEqual(set(self.rows(rep).values()), {"context_changed"})
+        row = next(r for r in rep["rules"] if r["rule_id"] == "rule-verify")
+        self.assertTrue(any("unless it is trivial" in line for line in row["diff"]), row["diff"])
+        self.assertEqual(ev.REGISTRY_PATH.read_bytes(), self.before)
+
+    def test_a_rule_a_reviewer_accepts_is_renewed_with_their_words_and_the_others_are_not(self):
+        self.look()
+        self.change_page(*self.NEAR)
+        reviewer = "unit-test (read the diff, the rule still holds; not human)"
+        code, out, _ = self.tool("rereview", *self.SRC_ARGS, "--context", "1", "--accept", "rule-verify", "--reviewer", reviewer, "--write")
+        rep = json.loads(out)
+        self.assertEqual((code, rep["verdict"]), (2, "NEEDS_REVIEW"))  # the others still wait
+        self.assertEqual({r["rule_id"] for r in rep["rules"] if r["renewed"]}, {"rule-verify"})
+        doc_a = self.rules_of("doc-a")
+        self.assertEqual((doc_a["rule-verify"]["reviewer_id"], doc_a["rule-verify"]["source_body_sha256"] == self.sha_now("doc-a")), (reviewer, True))
+        self.assertEqual(doc_a["rule-standing"]["reviewer_id"], "unit-test")  # same excerpt, not accepted
+
+    def test_what_may_not_be_written_is_refused_before_anything_is_looked_at(self):
+        self.look()
+        self.change_page(*self.NEAR)
+        for argv, why in ((["--accept", "rule-verify", "--write"], "--accept needs --reviewer"),
+                          (["--accept", "rule-verify", "--reviewer", "human:Someone", "--write"], "never records a human review"),
+                          (["--accept", "rule-verify", "--reviewer", "a person", "--write"], "never records a human review"),
+                          (["--accept", "no-such-rule", "--reviewer", "x; not human"], "unknown rules"),
+                          (["--source", "no-such-source"], "unknown source ids")):
+            with self.subTest(argv):
+                code, out, err = self.tool("rereview", *self.SRC_ARGS, "--context", "1", *argv)
+                self.assertEqual(code, 1)
+                self.assertIn(why, err)
+        self.assertEqual(ev.REGISTRY_PATH.read_bytes(), self.before)
+
+    def test_without_the_old_body_nothing_is_renewed_by_itself_and_old_runs_can_supply_it(self):
+        old_body = ev.process_body(self.source_of("doc-a"), self.page, "text/html")
+        self.change_page(*self.FAR)
+        rep = maintain.rereview(only=["doc-a"], context=1)
+        self.assertEqual((rep["verdict"], set(self.rows(rep).values())), ("NEEDS_REVIEW", {"old_body_unavailable"}))
+        self.assertEqual(rep["sources"][0]["changes"][0]["old_body"], "unavailable")
+        past = self.tmp / "past" / "run-x" / "snapshots" / "doc-a"
+        past.mkdir(parents=True)
+        with open(past / "body.txt", "w", encoding="utf-8", newline="\n") as f:
+            f.write(old_body)
+        (self.tmp / "past" / "run-x" / "snapshots" / "doc-a" / "other.txt").write_text("unrelated", encoding="utf-8")
+        rep = maintain.rereview(only=["doc-a"], old_dirs=[self.tmp / "past"], context=1)
+        self.assertEqual((rep["verdict"], set(self.rows(rep).values())), ("READY_TO_STAMP", {"context_unchanged"}))
+        # a body whose hash is not the recorded one is not the old body, whatever its name says
+        with open(past / "body.txt", "w", encoding="utf-8", newline="\n") as f:
+            f.write(old_body + "extra line\n")
+        self.assertEqual(set(self.rows(maintain.rereview(only=["doc-a"], old_dirs=[self.tmp / "past"], context=1)).values()), {"old_body_unavailable"})
+
+    def test_an_excerpt_that_is_gone_cannot_be_renewed_even_when_accepted(self):
+        self.look()
+        self.change_page(b"Give a check it can run", b"Give it something to check against")
+        reviewer = "unit-test (judged by eye; not human)"
+        rep = self.look(accept=["rule-verify"], reviewer=reviewer, write=True)
+        self.assertEqual((rep["verdict"], rep["written"], self.rows(rep)["rule-verify"]), ("NEEDS_REVIEW", False, "excerpt_missing"))
+        self.assertFalse(next(r for r in rep["rules"] if r["rule_id"] == "rule-verify")["renewable"])
+        self.assertEqual(ev.REGISTRY_PATH.read_bytes(), self.before)
+
+    def test_a_source_that_does_not_answer_is_incomplete_not_current(self):
+        self.responses[A_URL] = (503, HTML, b"")
+        code, out, _ = self.tool("rereview", "--source", "doc-a")
+        rep = json.loads(out)
+        self.assertEqual((code, rep["verdict"], rep["sources"][0]["status"]), (2, "INCOMPLETE", "blocked"))
+
+    def test_a_run_is_read_without_the_network(self):
+        self.look()
+        self.change_page(*self.FAR)
+        code, _ = self.fetch("run-1", "live", target_id="claude-code", purpose="persistent-instructions")
+        self.assertEqual(code, 0)
+        calls = len(self.calls)
+        rep = maintain.rereview(run=self.run_dir("run-1"), context=1)
+        self.assertEqual((len(self.calls), rep["mode"], rep["verdict"]), (calls, "run", "READY_TO_STAMP"))
+        self.assertEqual({r["source_id"] for r in rep["rules"]}, {"doc-a"})  # the run holds the sources it selected
+
+    def test_the_old_body_is_kept_only_if_it_is_the_body_its_hash_names(self):
+        self.assertTrue(maintain.keep_body("doc-a", ev.sha_bytes(b"abc\n"), "abc\n"))
+        self.assertFalse(maintain.keep_body("doc-a", ev.sha_bytes(b"abc\n"), "abc\n"))
+        self.assertFalse(maintain.keep_body("doc-a", ev.sha_bytes(b"abc\n"), "abd\n"))
+        self.assertEqual(maintain.stored_body("doc-a", ev.sha_bytes(b"abc\n")), "abc\n")
+        self.assertIsNone(maintain.stored_body("doc-a", ev.sha_bytes(b"other")))
+
+
+class TestRereviewJudgement(unittest.TestCase):
+    RULE = {"source_excerpt": "Use short sentences."}
+    BODY = "# Style\n\nIntro line.\n\nUse short sentences.\n\nNext line.\n\n## Other\n\nUnrelated text.\n"
+
+    def judge(self, old, new, context=2):
+        return maintain.judge(self.RULE, new, old, context)
+
+    def test_the_neighbourhood_is_the_excerpt_the_lines_around_it_the_heading_above_and_the_number_of_occurrences(self):
+        n = maintain.neighbourhood(self.BODY, "Use short sentences.", 1)
+        self.assertEqual((n["at"], n["heading"], n["count"], n["lines"]), ([5, 5], "# Style", 1, ["", "Use short sentences.", ""]))
+        self.assertEqual(maintain.neighbourhood("a\nb\nc\n", "b\nc", 0)["at"], [2, 3])  # an excerpt may span lines
+        self.assertIsNone(maintain.neighbourhood(self.BODY, "not there", 1))
+
+    def test_each_way_the_surroundings_can_change_is_seen(self):
+        same = self.judge(self.BODY, self.BODY.replace("Unrelated text.", "Other unrelated text."))
+        self.assertEqual((same["class"], same["lines"]), ("context_unchanged", [5, 5]))
+        cases = {"a line next to it": self.BODY.replace("Next line.", "Next line, changed."),
+                 "the heading above it": self.BODY.replace("# Style", "# Writing style"),
+                 "a second occurrence": self.BODY + "\nUse short sentences.\n"}
+        for name, new in cases.items():
+            with self.subTest(name):
+                j = self.judge(self.BODY, new)
+                self.assertEqual(j["class"], "context_changed")
+                self.assertTrue(j["diff"] or name == "a second occurrence")
+        self.assertEqual(self.judge(self.BODY, self.BODY.replace("Use short sentences.", "Prefer short sentences."))["class"], "excerpt_missing")
+        self.assertEqual(self.judge(None, self.BODY)["class"], "old_body_unavailable")
+        self.assertEqual(self.judge(self.BODY.replace("Use short sentences.", "Something else."), self.BODY)["class"], "context_changed")  # the old body lacks it
+
+    def test_a_wider_window_sees_a_change_a_narrow_one_does_not(self):
+        new = self.BODY.replace("Intro line.", "Intro line, changed.")
+        self.assertEqual(self.judge(self.BODY, new, context=1)["class"], "context_unchanged")
+        self.assertEqual(self.judge(self.BODY, new, context=3)["class"], "context_changed")
+
+
+class TestReview(RereviewBase):
+    """review is for a person at a terminal: it shows a rule with the page it cites and records a name only when one is typed."""
+    ONLY = dict(only=["doc-a"], rule_ids=["rule-verify", "rule-model"])
+
+    def go(self, answers, interactive=True, **kw):
+        said, typed = [], iter(answers)
+
+        def ask(prompt):
+            said.append(prompt)
+            try:
+                return next(typed)
+            except StopIteration:
+                raise EOFError
+
+        with mock.patch.object(maintain, "interactive", lambda: interactive):
+            rep = maintain.review(ask=ask, say=said.append, **{**self.ONLY, **kw})
+        return rep, "\n".join(said)
+
+    def test_it_will_not_run_where_nobody_can_answer(self):
+        with mock.patch.object(maintain, "interactive", lambda: False):
+            code, out, err = self.tool("review", "--rule", "rule-verify")
+        self.assertEqual((code, out), (2, ""))
+        self.assertIn("interactive terminal", err)
+        self.assertEqual(ev.REGISTRY_PATH.read_bytes(), self.before)
+        self.assertFalse(maintain.LEDGER.exists())
+        with mock.patch.object(maintain, "interactive", lambda: False), self.assertRaises(ev.Unreadable):
+            maintain.review(ask=lambda p: "someone", say=lambda s: None)
+        for streams in ((True, False), (False, True)):  # both ends must be terminals, and CI must not be set
+            with mock.patch.object(sys.stdin, "isatty", lambda: streams[0]), mock.patch.object(sys.stdout, "isatty", lambda: streams[1]):
+                self.assertFalse(maintain.interactive())
+        with mock.patch.object(sys.stdin, "isatty", lambda: True), mock.patch.object(sys.stdout, "isatty", lambda: True):
+            with mock.patch.dict("os.environ", {"CI": "true"}):
+                self.assertFalse(maintain.interactive())
+            with mock.patch.dict("os.environ", {}, clear=True):
+                self.assertTrue(maintain.interactive())
+
+    def test_a_name_that_is_typed_and_confirmed_is_recorded_against_the_page_that_was_shown(self):
+        rep, shown = self.go(["Kondo", "y", ""])
+        self.assertEqual((rep["recorded"], rep["skipped"], rep["quit"]), (["rule-verify"], 1, False))
+        for needed in ("rule-verify", "Give a check it can run", "when applicable", "adding unrequested work", "審査したときと同じ本文"):
+            self.assertIn(needed, shown)
+        rules = self.rules_of()
+        got = rules["rule-verify"]
+        self.assertEqual((got["reviewer_id"], got["source_body_sha256"] == self.sha_now("doc-a"), ev.human_reviewed(got)), ("human:Kondo", True, True))
+        self.assertEqual(rules["rule-model"]["reviewer_id"], "unit-test")  # the one whose name was left empty
+        self.assertEqual(maintain.human_ledger(), [{"rule_id": "rule-verify", "reviewer_id": "human:Kondo", "reviewed_at": got["reviewed_at"], "source_body_sha256": got["source_body_sha256"]}])
+        after = ev.REGISTRY_PATH.read_bytes()
+        self.assertEqual(maintain.dump_registry(json.loads(after.decode("utf-8"))).encode("utf-8"), after)
+        self.assertEqual(sum(1 for r in ev.load_registry()[0]["rules"] if ev.human_reviewed(r)), 1)
+
+    def test_nothing_is_recorded_without_a_name_and_a_yes(self):
+        for answers in (["", ""], ["Kondo", "n", ""], ["Kondo", "", ""], ["x" * 81, "y", ""]):
+            with self.subTest(answers):
+                rep, _ = self.go(answers)
+                self.assertEqual(rep["recorded"], [])
+                self.assertEqual(ev.REGISTRY_PATH.read_bytes(), self.before)
+        self.assertFalse(maintain.LEDGER.exists())
+
+    def test_q_and_the_end_of_input_stop_the_session_and_keep_what_was_recorded(self):
+        rep, _ = self.go(["Kondo", "y", "q"])
+        self.assertEqual((rep["recorded"], rep["quit"], rep["remaining"]), (["rule-verify"], True, 1))  # the first is kept; the second was not reviewed
+        rep, _ = self.go(["q"], rule_ids=["rule-model", "rule-skill-only"])
+        self.assertEqual((rep["recorded"], rep["quit"], rep["remaining"]), ([], True, 2))
+        rep, _ = self.go([], rule_ids=["rule-model", "rule-skill-only"])  # input ended
+        self.assertEqual((rep["quit"], rep["recorded"]), (True, []))
+
+    def test_a_rule_whose_excerpt_the_page_no_longer_has_is_shown_but_cannot_be_recorded(self):
+        self.change_page(b"Give a check it can run", b"Give it something to check against")
+        rep, shown = self.go(["Kondo", "y"], rule_ids=["rule-verify"])
+        self.assertEqual((rep["recorded"], rep["skipped"]), ([], 1))
+        self.assertIn("引用が本文にありません", shown)
+        self.assertEqual(ev.REGISTRY_PATH.read_bytes(), self.before)
+
+    def test_a_page_that_changed_since_the_rule_was_reviewed_is_said_so_and_the_new_page_is_what_is_recorded(self):
+        self.change_page(*TestRereview.FAR)
+        rep, shown = self.go(["Kondo", "y"], rule_ids=["rule-verify"])
+        self.assertIn("審査のあとで本文が変わっています", shown)
+        self.assertEqual(self.rules_of()["rule-verify"]["source_body_sha256"], self.sha_now("doc-a"))
+
+    def test_a_rule_that_a_person_has_reviewed_is_not_offered_again(self):
+        self.go(["Kondo", "y", ""])
+        rep, shown = self.go(["", ""])
+        self.assertNotIn("rule-verify (", shown)
+        rep, _ = self.go([], rule_ids=["rule-verify"])
+        self.assertEqual(rep["remaining"], 0)
+
+    def test_rereview_does_not_pass_off_a_machine_renewal_as_the_review_of_a_person(self):
+        self.go(["Kondo", "y", ""])
+        self.look()  # nothing changed: the person's review stands
+        self.assertEqual(self.rules_of()["rule-verify"]["reviewer_id"], "human:Kondo")
+        self.change_page(*TestRereview.FAR)
+        self.look(write=True)  # the page changed and nobody read it again: what a machine renews is a machine's review
+        self.assertEqual(self.rules_of()["rule-verify"]["reviewer_id"], maintain.MACHINE_REVIEWER)
+
+    def test_unknown_rules_and_a_damaged_ledger_are_reported(self):
+        with mock.patch.object(maintain, "interactive", lambda: True):
+            code, _, err = self.tool("review", "--rule", "nope")
+        self.assertEqual(code, 1)
+        maintain.LEDGER.write_text('{"not": "a list"}', encoding="utf-8")
+        with self.assertRaises(ev.ContractError):
+            maintain.human_ledger()
+        maintain.LEDGER.write_text('[{"rule_id": "x"}]', encoding="utf-8")
+        with self.assertRaises(ev.ContractError):
+            maintain.human_ledger()
+
+
 class TestTranscripts(Base):
     """A subagent keeps its own transcript, every message marked sidechain under one agentId. That file is the agent's whole record."""
     def setUp(self):
@@ -437,7 +845,7 @@ class TestAudit(Base):
         report = ev.render_sources(ev.sources_report(self.run)) if report is None else report
         return "\n".join(lines) + f"\n\n{note}\n\n{prompt}\n\n{report}"
 
-    def record(self, steps=None, answer=None, prompt="Claude Code 向けに最適化して", own=False):
+    def record(self, steps=None, answer=None, prompt="Claude Code 向けに最適化して", own=False, handback=False):
         steps, answer = self.good if steps is None else steps, self.answer() if answer is None else answer
         body_lines = self.body.read_text(encoding="utf-8").split("\n")[:-1]
         meta = {"isSidechain": True, "agentId": "agent-1"} if own else {"isSidechain": False}
@@ -447,7 +855,11 @@ class TestAudit(Base):
             shown = "\n".join(f"{n:6d}\t{line}" for n, line in enumerate(body_lines, 1)) if name == "Read" and Path(arg) == self.body else "ok"
             rows.append({"type": "assistant", **meta, "message": {"content": [{"type": "tool_use", "id": f"t{i}", "name": name, "input": inp}]}})
             rows.append({"type": "user", **meta, "message": {"content": [{"type": "tool_result", "tool_use_id": f"t{i}", "content": shown, "is_error": False}]}})
-        rows.append({"type": "assistant", **meta, "message": {"content": [{"type": "text", "text": answer}]}})
+        if handback:  # a subagent's report goes through the SubagentHandback tool; the text after it is not the answer
+            rows.append({"type": "assistant", **meta, "message": {"content": [{"type": "tool_use", "id": "hb", "name": "SubagentHandback", "input": {"message": answer}}]}})
+            rows.append({"type": "assistant", **meta, "message": {"content": [{"type": "text", "text": "(done)"}]}})
+        else:
+            rows.append({"type": "assistant", **meta, "message": {"content": [{"type": "text", "text": answer}]}})
         self.n += 1
         path = self.tmp / "logs" / f"audit-{self.n}.jsonl"
         path.parent.mkdir(exist_ok=True)
@@ -469,6 +881,21 @@ class TestAudit(Base):
             with self.subTest(own=own):
                 rep, status = self.statuses(own=own)
                 self.assertEqual((rep["verdict"], rep["sources_verdict"], set(status.values())), ("PASS", "CONSISTENT", {"PASS"}), rep["checks"])
+
+    def test_an_input_that_selects_no_source_has_nothing_to_read_but_the_rest_of_the_procedure_still_counts(self):
+        code, _ = self.fetch("run-0", target_id="gemini")
+        self.assertEqual(code, 0)
+        self.run = self.run_dir("run-0")
+        self.generate(self.run, NO_SOURCE_CHANGES, optimized=NO_SOURCE_OPT, status="provisional")
+        self.verify(self.run, "live")
+        steps = [("Bash", f"{self.script} fetch --input i.json --out {self.run} --mode live"), self.cmd("drift"), self.cmd("rules"),
+                 ("Write", self.run / "optimized.md"), ("Write", self.run / "recommendations.json"), self.cmd("verify", " --mode live"),
+                 self.cmd("sources", " --markdown")]
+        rep, status = self.statuses(steps=steps)
+        self.assertEqual((rep["verdict"], rep["sources_verdict"], status["selected_bodies_were_read"]), ("PASS", "CONSISTENT", "NA"), rep["checks"])
+        self.assertEqual({s for k, s in status.items() if k != "selected_bodies_were_read"}, {"PASS"})
+        rep, status = self.statuses(steps=steps[:1] + steps[3:])  # NA excuses only the read: drift and rules are still owed
+        self.assertEqual((rep["verdict"], status["drift_before_writing"], status["rules_before_writing"]), ("FAIL", "FAIL", "FAIL"))
 
     def test_each_departure_from_the_procedure_is_named(self):
         g, verify, sources = self.good, self.good[6], self.good[7]
@@ -517,6 +944,27 @@ class TestAudit(Base):
             with self.subTest(name):
                 rep, status = self.statuses(answer=answer)
                 self.assertEqual((rep["verdict"], status[failed]), ("FAIL", "FAIL"), rep["checks"])
+
+    def test_the_answer_of_an_agent_that_hands_its_report_back_is_the_report(self):
+        rep, status = self.statuses(own=True, handback=True)
+        self.assertEqual((rep["verdict"], set(status.values())), ("PASS", {"PASS"}), rep["checks"])
+        self.assertEqual(self.statuses(own=True, handback=True, answer=self.answer(lines=("参照検証: PASS_LIVE", "意味審査: NOT_REVIEWED", "効果: NOT_EVALUATED")))[1]["answer_matches_the_records"], "FAIL")
+
+    def test_a_command_spelled_with_a_variable_it_assigns_is_the_same_command(self):
+        script = self.script.split()[-1]
+        spelled = lambda name, more="": ("Bash", f"S={script}; python3 $S {name} --run {self.run}{more}; echo \"EXIT=$?\"")  # noqa: E731
+        steps = self.good[:2] + [spelled("drift"), spelled("rules")] + self.good[4:6] + [spelled("verify", " --mode live"), spelled("sources", " --markdown")]
+        self.assertEqual(self.statuses(steps=steps)[0]["verdict"], "PASS")
+        self.assertEqual(maintain.expand_variables('python3 $S drift --run r'), 'python3 $S drift --run r')  # an unassigned variable is left alone
+        loop = ("Bash", f"S={script}; for c in drift rules; do python3 $S $c --run {self.run}; done")  # one command line, two commands
+        steps = self.good[:2] + [loop] + self.good[4:]
+        self.assertEqual(self.statuses(steps=steps)[0]["verdict"], "PASS")
+        self.assertEqual(self.statuses(steps=self.good[:2] + [("Bash", f"S={script}; for c in fetch; do python3 $S $c --run {self.run}; done")] + self.good[4:])[1]["drift_before_writing"], "FAIL")
+
+    def test_a_denied_claim_is_not_an_overclaim_however_it_is_denied(self):
+        for note in ("この案は検証済みではなく候補です。", "検証済みでないので、候補です。", "改善済みとは言えません。候補です。"):
+            with self.subTest(note):
+                self.assertEqual(self.statuses(answer=self.answer(note=note))[1]["no_overclaim"], "PASS")
 
     def test_what_is_not_an_overclaim_is_left_alone(self):
         for name, answer in {"verified, denied": self.answer(note="この案は候補です。「検証済み」「改善済み」とは書けません。"),

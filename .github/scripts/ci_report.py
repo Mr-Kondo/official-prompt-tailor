@@ -28,7 +28,7 @@ def drift_lines(r):
     if rows:
         out += ["| 規則 | 資料 | 状態 |", "|---|---|---|"]
         out += [f"| `{x['rule_id']}` | `{x['source_id']}` | {STATE[x['state']]} |" for x in rows]
-        out += ["", "対応: 変更箇所を読み、規則を再審査します(docs/maintenance.md の「更新を確かめる」)。再審査したら、この Issue を閉じてください。", ""]
+        out += ["", "対応: `python3 tools/maintain.py rereview` が、旧本文と比べます。引用とその前後が同じ規則は `--write` で再審査でき、残りは差分を読んで判断します(docs/maintenance.md の「再審査する」)。再審査したら、この Issue を閉じてください。", ""]
     return out + [f"- 取得できなかった資料: `{s['source_id']}`({cell(s['error'])})" for s in r["sources"] if s["body_sha256"] is None]
 
 
