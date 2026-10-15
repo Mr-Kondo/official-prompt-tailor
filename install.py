@@ -16,6 +16,7 @@ with --force an existing copy (or ZIP) is renamed to <name>.bak-<timestamp> besi
 --uninstall is the only command that deletes: it removes a copy it recognises as this skill (backups are left alone).
 """
 import argparse
+import hashlib
 import json
 import re
 import shutil
@@ -193,6 +194,21 @@ def make_plugin(out_dir, author, force, dry):
     return 0
 
 
+ZIP_TIME = (1980, 1, 1, 0, 0, 0)  # the earliest time a ZIP can hold; the files' own times are not used
+
+
+def write_zip(target, files):
+    """The same files give the same bytes on any machine at any time: sorted by name, one fixed time, mode and creator, no compression.
+    So the ZIP built from a release tag can be compared with the one published for that tag (docs/maintenance.md).
+    shortcut: stored, not deflated, because a deflate stream depends on the zlib build; deflate if the size ever matters."""
+    named = sorted((f"{NAME}/{p.relative_to(SRC).as_posix()}", p) for p in files)  # the skill folder is the ZIP root, as the upload requires
+    with zipfile.ZipFile(target, "w") as z:
+        for arcname, p in named:
+            info = zipfile.ZipInfo(arcname, ZIP_TIME)
+            info.create_system, info.external_attr = 3, 0o644 << 16
+            z.writestr(info, p.read_bytes())
+
+
 def make_zip(out_dir, force, dry):
     out_dir = Path(out_dir).resolve()
     if not out_dir.is_dir():
@@ -212,9 +228,7 @@ def make_zip(out_dir, force, dry):
         kept = out_dir / f"{NAME}.zip.bak-{datetime.now():%Y%m%d%H%M%S}"
         target.rename(kept)
         print(f"previous ZIP kept at {kept}")
-    with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as z:
-        for p in files:  # the skill folder is the ZIP root, as the upload requires
-            z.write(p, f"{NAME}/{p.relative_to(SRC).as_posix()}")
+    write_zip(target, files)
     with zipfile.ZipFile(target) as z, tempfile.TemporaryDirectory() as tmp:
         if f"{NAME}/SKILL.md" not in z.namelist():
             die("ZIP self-check failed: SKILL.md is not under the skill folder")
@@ -225,6 +239,7 @@ def make_zip(out_dir, force, dry):
         die("ZIP self-check failed; removed\n" + msg)
     print(msg)
     print(f"created: {target}")
+    print(f"sha256: {hashlib.sha256(target.read_bytes()).hexdigest()}")
     print("next (Claude / Cowork): Customize > Skills > + > Upload a skill, then choose this ZIP.")
     print("  Needs code execution enabled and network egress to the domains listed in README.md.")
     print("  ChatGPT Work has no documented folder for standalone skills: build a plugin with --plugin instead.")

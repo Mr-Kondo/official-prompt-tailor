@@ -2085,6 +2085,33 @@ class TestInstall(unittest.TestCase):
         self.assertEqual(self.install("--zip", str(dry), "--dry-run").returncode, 0)
         self.assertEqual(list(dry.iterdir()), [])
 
+    def zip_bytes(self, src, out):
+        """The ZIP that install.py makes from the skill folder src."""
+        sys.path.insert(0, str(ROOT))
+        self.addCleanup(sys.path.remove, str(ROOT))
+        import install
+        out.mkdir()
+        with mock.patch.object(install, "SRC", src), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(install.main(["--zip", str(out)]), 0)
+        return (out / "official-prompt-tailor.zip").read_bytes()
+
+    def test_zip_is_the_same_bytes_whenever_and_wherever_it_is_built(self):
+        # so that the ZIP built from a release tag can be compared by its sha256 with the one published for the tag
+        import zipfile
+        other = self.tmp / "other" / "official-prompt-tailor"
+        shutil.copytree(SKILL, other, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+        for p in other.rglob("*"):
+            if p.is_file():
+                os.utime(p, (1_000_000_000, 1_000_000_000))  # a time and a mode the original files do not have
+                p.chmod(0o755)
+        first, second = self.zip_bytes(SKILL, self.tmp / "z1"), self.zip_bytes(other, self.tmp / "z2")
+        self.assertEqual(hashlib.sha256(first).hexdigest(), hashlib.sha256(second).hexdigest())
+        with zipfile.ZipFile(io.BytesIO(first)) as z:
+            infos = z.infolist()
+        self.assertEqual([i.filename for i in infos], sorted(i.filename for i in infos))
+        self.assertEqual({(i.date_time, i.create_system, i.external_attr >> 16, i.compress_type) for i in infos},
+                         {((1980, 1, 1, 0, 0, 0), 3, 0o644, zipfile.ZIP_STORED)})
+
     def test_zip_refuses_a_skill_that_claude_ai_would_reject(self):
         sys.path.insert(0, str(ROOT))
         import install

@@ -240,3 +240,17 @@ python3 tools/maintain.py audit --run outputs/official-prompt-tailor/<run-id> --
 ```bash
 gh release create vX.Y.Z dist/official-prompt-tailor.zip --title vX.Y.Z --notes-file release-notes/vX.Y.Z.md
 ```
+
+### 公開した ZIP を確かめる
+
+ZIP は、同じファイルから、どの機械でも、いつ作っても同じバイト列になります(ファイルの並びを名前順にし、時刻・権限・作成元を固定して、圧縮しません)。そのため、タグから作り直した ZIP の sha256 を、公開された ZIP の `digest` と比べるだけで、ダウンロードせずに確かめられます。
+
+```bash
+git archive vX.Y.Z | tar -x -C <空のディレクトリ>
+mkdir <出力先> && python3 <空のディレクトリ>/install.py --zip <出力先>    # 最後の行 "sha256: …" を控える
+curl -s https://api.github.com/repos/Mr-Kondo/official-prompt-tailor/releases/tags/vX.Y.Z    # assets の digest が "sha256:…" で一致する
+```
+
+- `install.py --zip` は、最後に `sha256:` を出すので、`release.yml` のログにも残ります。
+- この方法で確かめられるのは、この変更を入れた後のリリースからです。それ以前の ZIP は、更新日時と圧縮が入っているため、作り直しても一致しません。
+- 一致しないときは、ZIP の中身(名前・サイズ・内容)を `unzip -l` と `diff -r` で比べます。ファイルの改行が CRLF になっていると一致しません(`.gitattributes` が LF に固定しているので、通常は起きません)。
