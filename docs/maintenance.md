@@ -9,10 +9,10 @@
    - `source_excerpt` が本文に残り、意味・適用範囲(`surfaces` / `models` / `purposes`)が変わっていないかを確認する。
    - `source_body_sha256`(= `acquisition.json` の `body_sha256`)、`reviewed_at`、`reviewer_id` を更新する。
    - 本文が変わると、旧審査は引き継がれず `rereview_pending` になります。
-   - 旧本文との差分で、変わった所が引用の前後に及ぶかを確かめる。旧本文は、記録した `source_body_sha256` と同じ SHA-256 の `body.txt`(過去の run の `snapshots/<id>/` など)を探すと、見つかることがあります。見つからないときは、新しい本文で引用の前後を読んで判断します。資料の全文はコミットしません(著作権)。
+   - 旧本文との差分で、変わった所が引用の前後に及ぶかを確かめる。これは `tools/maintain.py rereview` が行います([再審査する](#再審査するrereview))。旧本文は、記録した `source_body_sha256` と同じ SHA-256 の本文です。見つからないときは、新しい本文で引用の前後を読んで判断します。資料の全文はコミットしません(著作権)。
    - 見出しが変わって `locators_missing` になったときは、`body_locators` を新しい見出しに直します(2026-10-16 の `antigravity-cli-best-practices` が、この例です)。
 3. 実行中に、allowlist・scope・規則を緩めて合格させない。registry の SHA-256 は acquisition と verification に記録され、取得後に registry が変わると `FAIL` です。
-4. 規則の審査は、これまですべて実行主体(Claude Code, claude-sonnet-5-5)が、取得本文と照合して行いました。初期の 34 件は実装時、追加の 70 件(2026-10-15 に、候補 59 件のうち 31 資料から採用した分)は採用時です。このうち 11 件は、資料の本文が変わったため、2026-10-16 に再審査しました(`reviewer_id` は `agent re-review`。旧本文との差分で、引用とその前後が変わっていないことを確かめました)。人による審査ではありません(`reviewer_id` に明記)。人が確認した場合だけ、`reviewer_id` を `human:<名前か役割>` にしてください。`rules` と `sources` は、`human:` で始まる `reviewer_id` だけを人の審査として数えます(`human:` のあとが空だと、registry の検査が拒否します)。`tests/test_official_prompt_tailor.py` の `test_no_rule_claims_a_human_review_that_nobody_has_made` は、エージェントが自分で人の審査を書くのを防ぐ番人です。人が実際に審査したときは、その規則に合わせて、このテストを直します。
+4. 規則の審査は、これまですべて実行主体(Claude Code, claude-sonnet-5-5)が、取得本文と照合して行いました。初期の 34 件は実装時、追加の 70 件(2026-10-15 に、候補 59 件のうち 31 資料から採用した分)は採用時です。このうち 11 件は、資料の本文が変わったため、2026-10-16 に再審査しました(`reviewer_id` は `agent re-review`。旧本文との差分で、引用とその前後が変わっていないことを確かめました)。人による審査ではありません(`reviewer_id` に明記)。人の審査は、`tools/maintain.py review` が `human:<名前>` として記録します([人が審査する](#人が審査するreview))。`rules` と `sources` は、`human:` で始まる `reviewer_id` だけを人の審査として数えます(`human:` のあとが空だと、registry の検査が拒否します)。`tests/test_official_prompt_tailor.py` の `test_no_rule_claims_a_human_review_that_nobody_has_made` は、エージェントが自分で人の審査を書くのを防ぐ番人です。`human:` の規則は、`tools/human-reviews.json` に同じ審査の記録があるときだけ通ります。
 
 ### 移転の確認(2026-10-14)
 
@@ -42,33 +42,79 @@ python3 .claude/skills/official-prompt-tailor/scripts/evidence.py drift
 | state | 意味 | 対応 |
 |---|---|---|
 | `current` | 本文のハッシュが、審査時と同じ | なし |
-| `changed` | ハッシュが違い、引用は本文に残っている | 変更箇所を読み、再審査する |
+| `changed` | ハッシュが違い、引用は本文に残っている | `rereview` で旧本文と比べ、再審査する |
 | `excerpt_missing` | 引用が本文から消えた | 先に再審査する |
 | `unreviewed` | 未審査の規則 | 審査する |
 | `unverifiable` | 資料を取得できなかった | `error` を見て、再実行するか、人がブラウザで確かめる |
 
 `verdict` は、`changed` か `excerpt_missing` があれば `DRIFT` です。なければ、取得できない資料があるとき `INCOMPLETE`、それ以外は `CURRENT` です。終了コードは、`CURRENT` が 0、`DRIFT` と `INCOMPLETE` が 2、契約違反(`--run` の本文がハッシュと合わないなど)が 1 です。
 
-`changed` と `excerpt_missing` の規則は、「規則・資料の再確認方法」の手順 2 以降で再審査します。
+`changed` と `excerpt_missing` の規則は、「規則・資料の再確認方法」の手順 2 以降で再審査します。`rereview` が、この作業の機械的な部分を行います。
 
 「Updated 3 days ago」のような相対時刻の行は、本文から除かれます。記事が更新されなくても、毎日変わるためです。「Last updated: …」のような絶対日付は、ページが更新されたときだけ変わるので、本文に残ります。
 
+### 再審査する(`rereview`)
+
+毎週の `watch` が `DRIFT` を出すたびに、同じ作業が要ります。変わった資料の旧本文と新本文を比べ、規則の引用とその前後が変わっていないかを確かめる作業です。`rereview` が、その比較をします。
+
+```bash
+python3 tools/maintain.py rereview                      # 確認だけ。registry は書き換えない
+python3 tools/maintain.py rereview --write              # 引用とその前後が同じ規則だけ、審査を更新する
+python3 tools/maintain.py rereview --source <source_id> --rule <rule_id>   # 絞る(繰り返せる)
+python3 tools/maintain.py rereview --run outputs/official-prompt-tailor/<run-id>   # 通信せず、その run の本文で比べる
+```
+
+`drift` と同じように資料を取得し(変わったように見える資料は、2 秒待ってもう一度見ます)、`changed` と `excerpt_missing` の規則ごとに、旧本文と新本文の引用の位置を比べます。`class` は次のとおりです。
+
+| `class` | 意味 | `--write` |
+|---|---|---|
+| `context_unchanged` | 引用、その前後 5 行(`--context`)、直上の見出し、引用の出現回数が、旧本文と新本文で同じ。資料は別の所が変わった | 審査を更新する |
+| `context_changed` | 前後のどれかが変わった。`diff` に差分を出す | 更新しない。差分を読んで、`--accept <rule_id> --reviewer "…; not human"` で更新するか、規則を直す |
+| `old_body_unavailable` | 旧本文が見つからない | 更新しない(同上) |
+| `excerpt_missing` | 引用が本文から消えた | 更新できない。規則の引用を直す(`--accept` でも拒否します) |
+
+更新するのは、`source_body_sha256`・`reviewed_at`・`reviewer_id` の 3 項目だけです。規則の意味と適用範囲は変えません。`reviewer_id` は、既定で `tools/maintain.py rereview (excerpt and surrounding lines unchanged; mechanical; not human)` です。`--reviewer` で言い換えられますが、`human:` で始まるもの、または `not human` を含まないものは拒否します。再審査は人の審査を書きません。
+
+- 出力の `sources[].changes` に、資料全体の差分(変わった行の範囲と、先頭の数行)が出ます。引用から遠い所の変更も、ここで読めます。
+- `verdict`: `CURRENT`(変わった規則がない)/ `READY_TO_STAMP`(すべて `context_unchanged`。`--write` で更新できる)/ `NEEDS_REVIEW`(人が読む規則が残っている)/ `STAMPED`(`--write` で更新した)/ `INCOMPLETE`(取得できない資料がある)。終了コードは、`CURRENT` と `STAMPED` が 0、それ以外が 2 です。
+- 比べるのは、引用の前後の行だけです。窓の外にある、規則の意味を変える記述(「この節は非推奨」など)は見ません。`sources[].changes` を読んで、窓の外の変更も確かめてください。`drift` と同じく、変更が意味を変えたかは判定しません。
+- 人が審査した規則(`human:`)は、本文が変わって再審査すると、機械の審査に置き換わります。人が読んだのは、変わる前の本文だからです。
+
+#### 旧本文の残し方
+
+比べるには旧本文が要りますが、資料の全文はコミットしません(著作権)。次のように決めました。
+
+- `rereview` は、規則が審査された本文(規則に記録したハッシュと同じハッシュの、いまの本文)を、`outputs/reviewed-bodies/<source_id>/<sha256>.txt` に残します。`outputs/` は未追跡(`.gitignore`)です。変わっていない間に実行するだけで、残ります(`--write` は要りません)。
+- 旧本文は、次の順に探します。残した本文、`outputs/` の過去の run(`snapshots/<source_id>/body.txt`)、`--old <ディレクトリ>`(繰り返せる)。見つかった本文でも、SHA-256 が規則に記録したものと違えば、旧本文として使いません。
+- 残るのは、その clone の中だけです。新しい clone や別の機械には、ありません。毎週の `watch` は、残しません(通信して比べるだけです)。旧本文がないときは `old_body_unavailable` になり、新しい本文で引用の前後を読んで判断します。
+- そのため、本文が変わる前に、一度 `rereview` を実行しておくと、次の変更を比べられます。登録済みの規則の旧本文は、この変更の時点では、どこにも残っていません(過去の run があれば、そこから探せます)。
+- 残した本文を消しても、規則や registry は壊れません。比べられなくなるだけです。
+
 ### 新しい資料を見つける
 
-`tools/maintain.py discover` は、各公式サイトの `llms.txt`(ページの一覧)を読みます。キーワードに合い、まだ登録も既読にもしていないページを挙げます。スキルには同梱しない、保守用のツールです。
+`tools/maintain.py discover` は、各公式サイトの `llms.txt`(ページの一覧)か、`llms.txt` のないサイトの `sitemap.xml` を読みます。キーワードに合い、まだ登録も既読にもしていないページを挙げます。スキルには同梱しない、保守用のツールです。
 
 ```bash
 python3 tools/maintain.py discover
 ```
 
-- 一覧とキーワードは `tools/discovery.json` にあります。一覧ごとのキーは、`index_id`、`url`(`llms.txt` の URL)、`scope`(見るパスの先頭)です。`keywords` と `exclude`(正規表現)は任意で、絞り込みに使います。
+- 一覧とキーワードは `tools/discovery.json` にあります。一覧ごとのキーは、`index_id`、`url`(`llms.txt` か `sitemap.xml` の URL)、`scope`(見るパスの先頭)です。`keywords` と `exclude`(正規表現)は任意で、絞り込みに使います。`format` は `llms`(既定)か `sitemap` です。
 - `www.`、`.md`、`/index`、末尾の `/`、クエリ、http と https の違いは、同じページとして扱います。他のホストへのリンクは数えません。
 - 取得できなかった一覧は、2 秒待って 1 回だけ取得し直し、2 回目の結果を採ります(`drift` と同じです)。通信エラーや、配信の切り替え中の応答で、その一覧の候補が報告から消えないようにするためです。
 - 見送るページは、`--mark-seen` で既読にして、`tools/discovery-seen.json` をコミットします。採用するページは、先に登録するか、次の「登録案を作る」へ進みます。
 - 採用するのは、本文に、規則にできる記述(引用できる、指示の書き方についての助言)があるページだけです。テストは、すべての資料が配線され、`reviewed` の規則を 1 件以上持つことを求めます。規則のない資料は、`drift` でも変更を検知できません(`drift` が比べるのは、規則に記録したハッシュです)。管理・安全・構成・操作手順の説明だけのページは、見送ります。2026-10-15 の候補 59 件は、`llms.txt` のキーワードに合っただけのページを多く含んでいました。
 - `verdict` は、`CANDIDATES`、`INCOMPLETE`、`NONE` のいずれかです。候補が 1 件でもあれば、取得できない一覧があっても `CANDIDATES` です(取得できない一覧は、`indexes` の `status` と `error` に出ます)。候補がなく、取得できない一覧があるときが `INCOMPLETE` で、どちらもなければ `NONE` です。終了コードは、`NONE` が 0、それ以外が 2 です。
 
-`llms.txt` がないサイトは、対象外です。手で確かめてください。
+#### sitemap の一覧(`"format": "sitemap"`)
+
+`developers.openai.com` と `ai.google.dev` には `llms.txt` がないので、`sitemap.xml` から新しいページを探します。
+
+- `<urlset>` なら、その `<loc>` を、`<sitemapindex>` なら、`<loc>` が指す子の sitemap(同じホストの https のものだけ、最大 30 件)を読んで、`<loc>` を集めます。ほかのホストの子は読まず、`skipped` に残します。子の中の索引は、たどりません。
+- sitemap にはページの題がないので、パスの最後の部分(`prompt-engineering` → `prompt engineering`)を題の代わりにします。`keywords`・`exclude` は、題とパスに当てます。言語ごとのページが並ぶサイトでは、`scope` と `exclude` で絞ってください。
+- XML は構文解析せず、`<loc>` の中身だけを取り出します。DOCTYPE や実体参照は展開しません。内容の種類は `application/xml`・`text/xml`・`text/plain`、文字コードは UTF-8 だけです。gzip は読めません。1 つの応答は 5 MB までです(`support.claude.com` の sitemap は、これを超えて読めませんでした)。
+- 読めなかった子がある一覧は、`status` が `partial` で、`error` に子の URL と理由が出ます。読めたページの候補は、そのまま出ます。候補がなく、`partial` か `blocked` の一覧があるときは `INCOMPLETE` です。
+- **403 などの拒否は、そのまま報告します。** 取得し直すのは、`llms.txt` と同じく 1 回だけで、同じ URL に同じ方法です。ボット検査を避ける工夫はしません。拒否される時間帯は、`INCOMPLETE` のまま残ります。
+- 2026-10-15 の時点で、`openai-developers-sitemap` と `gemini-api-sitemap` の URL(`/sitemap.xml`)と `scope` は、登録時の推定です。この 2 つのホストには、実行環境のネットワーク許可がなく、取得を確かめていません。初回は手元で `discover` を実行し、`status` と `pages` を見て、`scope` を直してください。`platform.claude.com` と `code.claude.com` の `sitemap.xml` では、読取りを確かめました(それぞれ 3,937 件、2,713 件)。
 
 ### 登録案を作る
 
@@ -85,6 +131,22 @@ python3 tools/maintain.py propose --url https://code.claude.com/docs/en/memory.m
 - 取得できるのは、registry か `tools/discovery.json` に既にあるホストの、https のページだけです。登録済みのページや、未知の `--target` は、契約違反(終了コード 1)です。
 
 出力の `source` を、`sources` に貼ります。`targets` への配線、`rules` の追加、審査は、次の「新しい資料を足す」の手順 3 以降です。
+
+### 人が審査する(`review`)
+
+規則 104 件の審査は、すべて agent が行い、人の審査は 0 件でした。`review` は、人が規則を 1 件ずつ審査して、記録するための道具です。
+
+```bash
+python3 tools/maintain.py review                          # 人がまだ審査していない規則を、順に出す
+python3 tools/maintain.py review --rule <rule_id> --source <source_id> --limit 10
+```
+
+- **対話端末でだけ動きます。** 標準入力と標準出力が端末で、環境変数 `CI` がないときだけです。スクリプトやエージェントのツール呼出し、CI では、何も書かずに終了コード 2 で終わります。
+- 規則ごとに、資料の URL、対象、使える前提、使えない場合、意味、許される変更、引用、いまの本文の該当行(前後 5 行)を出します。本文が審査したときと変わっていれば、そう表示します。引用が本文にないときは、記録できません。
+- 「審査した人の名前」を入力した規則にだけ、`reviewer_id` を `human:<名前>` として記録します(確認で `y`)。空は飛ばし、`q` は終了です。1 件ずつ書き込むので、途中で止めても、記録済みの分は残ります。
+- 記録するのは、`source_body_sha256`(見せた本文のハッシュ)、`reviewed_at`、`reviewer_id` と、`tools/human-reviews.json` への 1 行です。この記録がない `human:` の規則は、テスト(`test_no_rule_claims_a_human_review_that_nobody_has_made`)が拒否します。エージェントが `registry.json` を直接書き換えて、人の審査を名乗るのを防ぐためです。
+- 入力した名前が本人かどうかは、確かめられません。端末で入力されたことを、記録しているだけです。コミットの作者と合わせて読んでください。
+- 人の審査を記録したら、`python3 tools/maintain.py docs --write` で、README と `docs/trust-boundary.md` の件数を直します。
 
 ### 新しい資料を足す(`adopt`)
 
@@ -168,7 +230,7 @@ python3 tools/maintain.py docs --write
 - `INCOMPLETE`(取得できない資料や一覧がある)は、実行の Summary に出るだけで、Issue にはなりません。通信エラーは、再実行で解消することがあります。
 - 再審査(または既読化)が済んだら、Issue を閉じます。閉じた Issue は開き直しません。次の週にまだ残っていれば、新しい Issue を立てます。
 
-`.github/workflows/test.yml` は、push と pull request で、Ubuntu は Python 3.9〜3.14、macOS と Windows は 3.9 と 3.14 のテストを実行します。どの組み合わせが失敗しても、workflow は失敗になります。
+`.github/workflows/test.yml` は、push と pull request で、Ubuntu は Python 3.9〜3.15、macOS と Windows は 3.9 と 3.14 のテストを実行します。どの組み合わせが失敗しても、workflow は失敗になります。
 
 3 つの workflow の Ubuntu は、`ubuntu-24.04` に固定しています。`ubuntu-latest` が Ubuntu 26 へ移り始めるのが 2026-10-19 で、`watch.yml` の定期実行と同じ日だからです(`test.yml` には、Python 3.9 のビルドが Ubuntu 26.04 にない、という理由もあります)。外すのは、`ubuntu-latest` で手動実行(`watch.yml`)が通ったあとです。
 
@@ -187,13 +249,16 @@ python3 tools/maintain.py audit --run outputs/official-prompt-tailor/<run-id> --
 
 `audit` が確かめるのは、手順を守ったか、最終回答が記録と合っているかです。各検査は `PASS` / `FAIL` / `WARN` / `NA` で、`FAIL` が 1 つでもあれば全体が `FAIL`(終了コード 1)です。
 
+- 最終回答は、記録の最後の assistant の文章です。最終報告を `SubagentHandback` ツールで返すエージェントは、その `message` が最終回答です。
+- コマンドは、`S=…/evidence.py; python3 $S drift` のように、同じコマンドの中で代入したシェル変数を展開し、`for c in drift rules; do …; done` のループは語ごとに書き出してから探します。
+
 | 検査 | 確かめること |
 |---|---|
 | `fetched`・`wrote_the_result` | `evidence.py fetch` を実行し、`optimized.md` か `recommendations.json` を書いた |
 | `drift_before_writing`・`rules_before_writing` | `drift --run` と `rules --run` を、最初の書込みより前に実行した |
 | `verified_after_writing` | 最初の書込みのあとに `verify` を実行し、`verification.json` が残っている |
 | `sources_after_verify` | 書込みのあとの最初の `verify` より後に、`sources --run` を実行した |
-| `selected_bodies_were_read` | 選ばれた資料のすべてが、最初の書込みの前に、成功した `Read` で示された(`verify` と同じ規則) |
+| `selected_bodies_were_read` | 選ばれた資料のすべてが、最初の書込みの前に、成功した `Read` で示された(`verify` と同じ規則)。資料が 0 件の入力では `NA`(読むものがない) |
 | `no_log_the_user_did_not_give` | 依頼文にないログのパスを、`--host-log` に使っていない |
 | `registry_not_read_whole` | `registry.json` を全体では読んでいない(`limit` なしの `Read`、`cat` など) |
 | `answer_has_three_lines` | 最終回答に、参照検証・意味審査・効果の 3 行がある |

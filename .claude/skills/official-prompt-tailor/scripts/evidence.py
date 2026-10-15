@@ -628,7 +628,9 @@ def _save_snapshot(run, sid, raw, body, entry):
         entry["body_path"], entry["body_sha256"] = f"snapshots/{sid}/body.txt", sha_bytes(body.encode("utf-8"))
 
 
-def fetch_live(src, run):
+def fetch_live(src, run, process=None):
+    """Fetch the first allowed URL and save what came back. `process` (default process_body) turns the bytes into the saved text:
+    tools/maintain.py passes its own for a sitemap; everything else about the fetch is the same."""
     url = src["allowed_urls"][0]
     e = new_entry(src["source_id"], url)
     raw = body = None
@@ -661,7 +663,7 @@ def fetch_live(src, run):
             raise Blocked("response_too_large")
         e["content_type"] = headers.get("content-type")
         e["extraction_version"] = src["extraction"]
-        body = process_body(src, raw, e["content_type"])
+        body = (process or process_body)(src, raw, e["content_type"])
         e["status"] = "live"
     except Blocked as b:
         e["error"] = b.code
@@ -1598,8 +1600,17 @@ def _read_text(r):
             "body_not_verified": "未観測(本文を確認できない)"}.get(r["reason"], "未観測")
 
 
-SOURCES_FORMAT = 2  # raise it whenever render_sources changes its wording or layout: a pasted report is compared only with the same format
+SOURCES_FORMAT = 3  # raise it whenever render_sources changes its wording or layout: a pasted report is compared only with the same format
 FORMAT_MARK = re.compile(r"<!-- sources-report format (\d+) -->")
+
+
+def _no_source_line(inp, plan):
+    """Why no source is chosen: the reader of an empty list should not take it for a failure."""
+    if inp["target_id"] == "unresolved":
+        return "利用先が `unresolved` のため、資料を選んでいません。"
+    return (f"この入力では、使える公式規則がなく、{'取得される' if plan else '取得する'}資料がありません(故障ではありません)。"
+            "`purpose`・`target_surface`・`model_id` が変わると、資料が選ばれることがあります。"
+            + ("" if plan else "`verify` は、この理由で `INCOMPLETE`(`no_applicable_official_source`)にします。"))
 
 
 def render_sources(rep):
@@ -1616,7 +1627,9 @@ def render_sources(rep):
                 f"- 取得: {rep['fetch']['mode']}(開始 {rep['fetch']['started_at']})", f"- 判定: **{rep['verdict']}**"]
     out += ["", "## モデルによる選択", ""] + _model_lines(rep) + ["", f"## {'選ばれる' if plan else '選んだ'}資料({len(rep['selected'])} 件)", ""]
     why = lambda x: "常に取得" if x["route"] == "required" else (f"条件付き(purpose: {_cond(x['purposes'])}、target_surface: {_cond(x['surfaces'])})" if x["route"] else "—")  # noqa: E731
-    if plan:
+    if not rep["selected"]:  # an empty table would look like a failure
+        out.append(_no_source_line(inp, plan))
+    elif plan:
         out += ["| 資料 | 選ばれる理由 | 対象モデル |", "|---|---|---|"]
         out += [f"| `{x['source_id']}` | {why(x)} | {_cond(x['models'])} |" for x in rep["selected"]]
     else:

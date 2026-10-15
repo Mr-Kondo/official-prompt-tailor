@@ -76,3 +76,72 @@ v0.3.0 までの実機の確認 3 件は、規則を書いたのと同じエー�
 - `sources` と `audit` は、同じ作者(Claude Code のエージェント)が書きました。同じ思い込みを共有している可能性があります。
 - `audit` の `sources_report_pasted_as_printed` は、貼られた報告を、いまの `sources --markdown` の出力と比べます。上の採点は、文言を整える前の書式(版の行がない、書式 1)で行いました。2026-10-16 に、`sources --markdown` の先頭に書式の版の行を足しました(いまは書式 2)。5 件を採点し直すと、この検査は全件で `WARN`(書式 1 の報告は、書式 2 と比べられない)になり、ほかの検査は全件で合格のままです。`audit` 全体は `PASS` です。
 - 同じ日に、registry の経路を直したので([maintenance.md](maintenance.md))、5 件の `sources` を、いまの registry で求め直すと `INCOMPLETE`(`registry_changed`: 取得したときの registry と違う)になります。採点したときは `CONSISTENT` でした。記録の中身(取得した本文、読取り)は変わっていません。
+
+# 資料が 0 件の入力を通した結果(2026-10-15)
+
+## 何を確かめたか
+
+`target_surface` と `model_id` が不明なとき、13 組(利用先 × `purpose`)で、取得される資料が 0 件になります(v0.4.1)。SKILL.md にその説明がなく、別のエージェントが手順どおりに通せるかを、確かめていませんでした。先に SKILL.md と証拠契約(`evidence-contract.md` の「資料が 0 件の入力」)に説明を足し、別の文脈のエージェント(Claude Code のサブエージェント)に通させました。方法は上と同じです(依頼文と run-id だけを渡し、最終回答のあとに「手順への所見」を書かせ、記録を `sources`・`verify --host-log`・`audit` で検査)。
+
+## 結果
+
+9 件を実行しました。資料が 0 件の入力になったのは 7 件です。
+
+| run | 利用先 / `purpose` | エージェント | SKILL.md | 選ばれた資料 | `verify`(ログあり) | `audit` |
+|---|---|---|---|---|---|---|
+| zero-1 | `chatgpt` / `agent-instruction` | haiku | 初版 | 0 | `INCOMPLETE` | `PASS` |
+| zero-2 | `gemini-cli` / `one-shot` | sonnet | 初版 | 0 | `INCOMPLETE` | `PASS` |
+| zero-3 | `gemini` / `persistent-instructions` | opus | 初版 | 0 | `INCOMPLETE` | `PASS` |
+| zero-6 | `antigravity` / `agent-instruction` | haiku | 更新後 | 0 | `INCOMPLETE` | `PASS` |
+| zero-7 | `codex` / `agent-instruction` | sonnet | 更新後 | 0 | `INCOMPLETE` | `PASS` |
+| zero-8 | `chatgpt-work` / `agent-instruction` | opus | 更新後 | 0 | `INCOMPLETE` | `PASS` |
+| zero-9 | `gemini-cli` / `one-shot` | haiku | 更新後 + 書式 3 | 0 | `INCOMPLETE` | `PASS`(警告なし) |
+
+- 7 件とも、`fetch` は終了コード 0、`selected_sources` は `[]`、`sources` は `CONSISTENT` でした。`verify` の `errors` は、`no_applicable_official_source` と `provisional_generation` の 2 つだけでした(ログを渡したので `no_host_log` は出ません)。`audit` の `selected_bodies_were_read` は `NA` です。
+- 7 件とも、最終回答に 3 行(参照検証 `INCOMPLETE`・意味審査 `NOT_REVIEWED`・効果 `NOT_EVALUATED`)があり、改稿を「候補」と書き、`official` の変更を書かず、`generation_status` を `provisional` にしました。変更は `editorial` だけが 4 件、`editorial` と `inference` が 3 件です。
+- 「初版」の 3 件(zero-1〜3)は、`verify` が `INCOMPLETE` になる理由を、SKILL.md の説明どおりに読みました。「更新後」は、下の問題を直したあとの SKILL.md です。`purpose` の説明を足したあと、3 件とも `agent-instruction` を選び、資料が付く別の `purpose` を最終回答に書くだけにしました(寄せませんでした)。
+- `audit` は、2026-10-15 に、`sources --markdown` の書式 2 の貼り付けで、7 件のうち 6 件を採点しました。そのあと書式を 3 に上げたので、いまの `audit` は、この 6 件で `sources_report_pasted_as_printed` が `WARN`(書式 2 の報告は、書式 3 と比べられない)になり、全体は `PASS` のままです。
+
+資料が 0 件ではなかった 2 件があります。
+
+| run | 利用先 / `purpose` | エージェント | 結果 |
+|---|---|---|---|
+| zero-4 | `codex` / `one-shot` | haiku | 資料 2 件が `blocked`(`network_error`)。`audit` は `FAIL`(`selected_bodies_were_read`) |
+| zero-5 | `antigravity` / `one-shot` | sonnet | 資料 1 件が `blocked`。`audit` は `FAIL`(`selected_bodies_were_read`) |
+
+どちらも、依頼の言葉から `one-shot` を選んだ結果、資料が選ばれましたが、この実行環境が `learn.chatgpt.com` と `antigravity.google` への接続を許可していなかったので、取得できませんでした。エージェントは、取得できなかったことを最終回答に書き、読んでいない資料を根拠にしませんでした。`audit` の `FAIL` は、資料を読めなかったという事実を、そのまま指しています。したがって、資料があって取得できる入力は、今回は通していません(v0.4.0 の 5 件が最後です)。
+
+## 見つかった問題と、直したこと
+
+| 問題 | 出どころ | 直したこと |
+|---|---|---|
+| `purpose` の選び方で、資料の有無が変わる。`agent-instruction` の説明が、Google ADK の例だけ | zero-1, 4, 5, 7, 8 | SKILL.md に、`agent-instruction`(エージェントの役割を定める指示)と `skill-instructions` の説明、「決めた値と理由を最終回答に書く」「資料が付く値に寄せない」を足した |
+| 「`target_surface`(例: `api`)を示すと資料が加わる」が、Gemini CLI の一回の依頼のように、`api` が当てはまらない利用先に合わない | zero-2 | 依頼が示す値が利用先に当てはまるときだけ、と書き直した。確かめ方(`sources --target … --surface …`)を足した |
+| run ディレクトリを先に作ると `fetch` が止まる。`blocked` のあとの再実行も同じ | zero-1, 4, 5 | `--out` は `fetch` が作る(先に作らない)、`blocked` からのやり直しは新しい run-id、と書いた |
+| 手順 1 の `original-<run-id>.md` と、手順 3 の `<run>/original.md` の対応が分からない | zero-2, 3, 5 | `fetch` が複製する、と書いた |
+| `after_excerpt` を短い抜粋にすると `after_excerpt_mismatch` で止まる | zero-6, 8 | SKILL.md と `recommendations-example.md` に、区間と完全に一致させる、と書いた |
+| 差分の全区間を覆う決まりが、手順の本文にない | zero-2 | 完成例を参照する文に一言足した |
+| `provisional_generation` が、0 件の節に出てこない。`scope` の `UNAVAILABLE` の意味が分からない | zero-3, 2 | 証拠契約の表に足した |
+| `rules --run` が、取得できなかった資料の規則も出すのに、「取得した資料のもの」と書いてある | zero-4 | 「選ばれた資料のもの(取得できなかった資料の規則も出るが、使わない)」に直した |
+| 「選んだ資料(0 件)」の空の表が、故障に見える | zero-7(と、検査した側) | `sources --markdown` が、空の表の代わりに理由の 1 行を出す(書式 3)。zero-9 で、貼り付けと `audit` を確かめた |
+| `audit`: 最終報告を `SubagentHandback` ツールで返すエージェントの最終回答を、読めなかった | 検査中に発見 | その `message` を最終回答として読む |
+| `audit`: `S=…/evidence.py; python3 $S drift` のようにシェル変数で書いたコマンドや、`for c in drift rules; do … $c …; done` のループを、数えなかった | 同上(zero-1, 2, 5) | 同じコマンドの中で代入した変数を展開し、ループは語ごとに書き出して探す |
+| `audit`: 「検証済みではなく候補」を、「検証済み」の主張と読んだ | 同上(zero-5) | 否定の語に「なく」を足した |
+| `audit`: 資料が 0 件の入力で、`selected_bodies_were_read` が必ず `FAIL` になる | 実装中に発見 | 読むものがないので `NA` にした。`drift`・`rules` の実行は、これまでどおり求める |
+
+## 直さなかったこと
+
+- `inference` と `editorial` の境界(箇条書きに分けるのは、どちらか)。3 件が迷いました。手順は決めていません。`verify` は件数を数えるだけで、分け方の妥当性を見ません。意味審査の仕事です。
+- 通常の Gemini アプリで、毎回の会話に効かせる指示に当たる `target_surface` の値がないこと(zero-3)。`gems` は Gems 用で、通常のアプリの常設指示は、資料がありません。registry の作りの問題で、このスキルの手順では解けません。
+- 「出力は日本語」が、最終報告の言語も指しうること(zero-3, 9)。生成するプロンプトの言語として扱う、と手順にあり、2 件とも、その読みに沿いました。
+- `execution_host` に `unknown` を許すか(zero-7)。分からないまま推定で書かない、とあるだけです。
+- 原文が決めていない点(「リンク切れ」の範囲、どの RFC か、など)。足さず、最終回答に書くようにしました。決めるのは利用者です。
+- この実行環境のサンドボックスの分類器が、プロキシの状態を調べるコマンドを、認証情報の探索として拒否したこと(zero-4, 5)。スキルの手順の外の事情です。
+
+## 限界
+
+- 9 件で、Anthropic のモデル(haiku・sonnet・opus)だけです。すべて同じ製品(Claude Code)のサブエージェントです。Codex・Antigravity・Claude Cowork・ChatGPT Work で、別のエージェントが動かした結果ではありません。
+- 資料が 0 件の入力は、7 件を通しました。13 組のうち、通した組は 7 つです(`chatgpt` の `agent-instruction`、`gemini-cli` の `one-shot`、`gemini` の `persistent-instructions`、`antigravity`・`codex`・`chatgpt-work` の `agent-instruction`)。残りの組は、通していません。
+- 「手順への所見」は、エージェントの自己申告です。`audit` が確かめたものではありません。
+- `audit` は、手順を守ったか、最終回答が記録と合っているかを見ます。改稿の良し悪しは見ません。意味審査と効果測定は、していません。
+- `audit` と、この節の直しは、同じ作者(Claude Code のエージェント)が書きました。同じ思い込みを共有している可能性があります。`audit` の読み違い(上の表の `audit` の 4 行)は、通らなかった記録を見て、または実装中に気づいて直しました。直したあとの `audit` が、そのほかの読み違いを持たないとは言えません。

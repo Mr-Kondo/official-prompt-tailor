@@ -89,6 +89,26 @@ sources --run RUN [--host-log LOG]                                          # ru
 
 確かめるのは、記録と registry の整合です。規則の解釈が正しいこと、資料を理解したこと、効果は確かめません。読取りを観測できるのは、ログを渡した Claude Code だけです。
 
+## 資料が 0 件の入力
+
+`target_surface` と `model_id` が `unknown` のとき、利用先 × `purpose` の一部の組は、`select_sources` が空を返す。その入力で使える `official` 規則がなく、規則のない資料は取得しない決まりだからである(registry の検査が、使える規則のない資料の取得を拒否する)。どの組が空かは、`sources --target T --purpose P`(計画。通信しない)の `selected` が空かどうかで分かる。`target_surface` や `model_id` を指定すると、資料と規則が加わることがある。
+
+各コマンドの振る舞い:
+
+| コマンド | 資料が 0 件のとき | 終了コード |
+|---|---|---|
+| `fetch` | `acquisition.json` の `selected_sources` と `sources` が空。通信しない | 0 |
+| `drift --run` | `CURRENT`。`sources` と `rules` が空 | 0 |
+| `rules --run` | `rules` が空(件数 0) | 0 |
+| `verify` | `INCOMPLETE`。`errors` は `no_applicable_official_source`、`generation_status` が `provisional` なら `provisional_generation`。ログがなければ `no_host_log` も出る。`--host-log` を渡しても `INCOMPLETE` のまま。`checks` の `scope` は `UNAVAILABLE`(`FAIL` ではなく、判定する資料がないという意味) | 2 |
+| `sources --run` | `CONSISTENT`。「選んだ資料(0 件)」は、空の表の代わりに、資料がない理由の 1 行(使える公式規則がない、故障ではない)を出す | 0 |
+
+- `official` の change は書けない。引用できる規則がないからである(書くと `verify` が `FAIL`)。`editorial` か `inference` だけにする。
+- `generation_status` は `provisional` にする(公式資料で裏づけられない案のため)。`complete` と書いても、`verify` の結果は `INCOMPLETE` のままで変わらない。
+- `verify` の `INCOMPLETE` は、再取得や再審査では解消しない。参照検証は `INCOMPLETE` のまま返し、改稿は候補と明記する。「検証済み」と書かない。
+- 最終回答の(3)には、資料が 0 件であることと、理由(使える公式規則がない)を書く。依頼が示す `target_surface` や `model_id` が利用先に当てはまるなら、指定すると資料が加わることがある(`api` は、その利用先が API で使われるときだけ。たとえば Gemini CLI の一回の依頼には当てはまらない)。`target_surface` と `model_id` は、依頼にないものを推定で埋めない。
+- `purpose` の選び方で、資料が 0 件かどうかが変わる(同じ利用先でも、`one-shot` では資料があり `agent-instruction` では 0 件、など)。依頼の言葉から決め、決めた値と理由を最終回答に書く。資料が付く値に寄せない。別の値なら資料が付くことは、(3)に書く。
+
 ## recommendations.json の change
 
 `kind`: `official`(規則・出典必須)/ `inference`(出典を付ける場合は全項目、付けない場合はすべて null)/ `editorial`(出典なし)。

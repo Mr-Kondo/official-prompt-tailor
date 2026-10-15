@@ -834,12 +834,18 @@ class TestRouting(unittest.TestCase):
         self.assertEqual(len(flat), len(set(flat)))
 
     def test_no_rule_claims_a_human_review_that_nobody_has_made(self):
-        # The other rules of the registry are tested in test_maintain.py (registry_problems). A person's review is recorded as
-        # reviewer_id "human:<name>" (docs/maintenance.md); this guard keeps an agent from writing one for itself. When a person
-        # has really reviewed a rule, change this test with that rule.
+        # The other rules of the registry are tested in test_maintain.py (registry_problems). A person's review is recorded by
+        # `tools/maintain.py review`, which refuses to run outside an interactive terminal and writes the review to tools/human-reviews.json
+        # as well (docs/maintenance.md). A rule may carry "human:<name>" only if the ledger holds that very review; this keeps an agent
+        # from writing one for itself in registry.json. It is a process check, not proof of who typed the name.
+        ledger = ROOT / "tools" / "human-reviews.json"
+        made = {(e["rule_id"], e["reviewer_id"], e["reviewed_at"], e["source_body_sha256"]) for e in json.loads(ledger.read_text(encoding="utf-8"))}
         for r in self.reg["rules"]:
             with self.subTest(r["rule_id"]):
-                self.assertNotIn("human", r["reviewer_id"].replace("not human", ""), "a rule claims a review by a person")
+                if ev.human_reviewed(r):
+                    self.assertIn((r["rule_id"], r["reviewer_id"], r["reviewed_at"], r["source_body_sha256"]), made, "a rule claims a review by a person that `review` did not record")
+                else:
+                    self.assertNotIn("human", r["reviewer_id"].replace("not human", ""), "a rule claims a review by a person")
 
 
 class TestExecutionHosts(Base):
@@ -880,6 +886,40 @@ class TestLifecycleRouting(Base):
         rep = self.verify(run, "live", self.write_log(run, read=False))
         self.assertEqual(rep["verdict"], "INCOMPLETE")
         self.assertIn("no_applicable_official_source", codes(rep))
+
+    def test_an_input_that_selects_no_source_behaves_as_the_contract_says(self):
+        """references/evidence-contract.md, 資料が 0 件の入力: the table there is this test."""
+        code, out, _ = self.cli("fetch", "--input", str(self.make_input(target_id="gemini")), "--out", str(self.run_dir()), "--mode", "live")
+        acq = json.loads(out)
+        self.assertEqual((code, acq["selected_sources"], acq["sources"], self.calls), (0, [], [], []))  # nothing is fetched
+        run = self.run_dir()
+        code, out, _ = self.cli("drift", "--run", str(run))
+        drift = json.loads(out)
+        self.assertEqual((code, drift["verdict"], drift["sources"], drift["rules"]), (0, "CURRENT", [], []))
+        code, out, _ = self.cli("rules", "--run", str(run))
+        self.assertEqual((code, json.loads(out)["rules"]), (0, []))
+        self.generate(run, NO_SOURCE_CHANGES, optimized=NO_SOURCE_OPT, status="provisional")
+        log = self.write_log(run, read=False)
+        for given in (None, log):  # a host log does not change it
+            code, out, _ = self.cli("verify", "--run", str(run), "--mode", "live", *(["--host-log", str(log)] if given else []))
+            rep = json.loads(out)
+            self.assertEqual((code, rep["verdict"]), (2, "INCOMPLETE"))
+            self.assertIn("no_applicable_official_source", codes(rep))
+            self.assertEqual(rep["sources"], [])
+        code, out, _ = self.cli("sources", "--run", str(run))
+        rep = json.loads(out)
+        self.assertEqual((code, rep["verdict"], rep["selected"]), (0, "CONSISTENT", []))
+        text = ev.render_sources(ev.sources_report(run))  # the report says why the list is empty instead of showing an empty table
+        for needed in ("## 選んだ資料(0 件)", "使える公式規則がなく、取得する資料がありません(故障ではありません)", "`INCOMPLETE`(`no_applicable_official_source`)"):
+            self.assertIn(needed, text)
+        self.assertNotIn("| 資料 |", text)
+        self.fetch("run-2", target_id="unresolved")
+        self.assertIn("利用先が `unresolved` のため、資料を選んでいません。", ev.render_sources(ev.sources_report(self.run_dir("run-2"))))
+        # an official change has no rule to cite
+        self.rewrite_rec(run, lambda r: r["changes"][0].update({"kind": "official", "rule_id": "rule-verify", "source_id": "doc-a",
+                                                                "body_sha256": "0" * 64, "source_start_line": 1, "source_end_line": 1, "exact_excerpt": "x"}))
+        rep = self.verify(run, "live", log)
+        self.assertEqual(rep["verdict"], "FAIL")
 
     def test_provisional_generation_is_never_a_pass(self):
         run, log = self.good_run()
@@ -1750,6 +1790,13 @@ class TestSourcesPlan(unittest.TestCase):
         self.assertEqual([int(m) for m in ev.FORMAT_MARK.findall(text)], [ev.SOURCES_FORMAT])
         self.assertTrue(ev.FORMAT_MARK.match(text))
 
+    def test_a_plan_of_no_sources_says_why_instead_of_showing_an_empty_table(self):
+        text = ev.render_sources(self.plan("gemini-cli", "unknown", "unknown", purpose="one-shot"))
+        self.assertIn("## 選ばれる資料(0 件)", text)
+        self.assertIn("使える公式規則がなく、取得される資料がありません(故障ではありません)", text)
+        self.assertNotIn("| 資料 |", text)
+        self.assertIn("| 資料 |", ev.render_sources(self.plan("claude-code", "unknown", "unknown", purpose="one-shot")))  # a plan that has sources still has its table
+
     def test_markdown_says_so_when_no_guide_is_chosen_and_names_each_guide_once(self):
         text = ev.render_sources(self.plan(surface="unknown", model="unknown"))
         self.assertIn("`model_id`=`unknown` で、選ばれたものはありません。", text)
@@ -1942,6 +1989,14 @@ class TestSkillFiles(unittest.TestCase):
         for rel in re.findall(r"\]\((?!http)([^)]+)\)", text):
             self.assertTrue((SKILL / rel).exists(), rel)
         self.assertLessEqual(len(text.splitlines()), 120)  # entry point stays short; detail lives in references/
+
+    def test_the_zero_source_case_is_explained_where_an_agent_reads_it(self):
+        skill = (SKILL / "SKILL.md").read_text(encoding="utf-8")
+        contract = (SKILL / "references" / "evidence-contract.md").read_text(encoding="utf-8")
+        for needed in ("`selected_sources` が `[]`", "no_applicable_official_source", "provisional", "INCOMPLETE"):
+            self.assertIn(needed, skill)
+        self.assertIn("## 資料が 0 件の入力", contract)
+        self.assertIn("no_applicable_official_source", (SKILL / "scripts" / "evidence.py").read_text(encoding="utf-8"))  # the code the text names exists
 
     def test_every_subcommand_the_documents_run_exists(self):
         import re

@@ -1,16 +1,21 @@
 #!/usr/bin/env python3
-"""Maintainer tools for official-prompt-tailor (not shipped with the skill): discover / propose / adopt / docs / audit.
+"""Maintainer tools for official-prompt-tailor (not shipped with the skill): discover / propose / adopt / rereview / review / docs / audit.
 
-discover: list pages in each host's llms.txt that look relevant and are not registered or triaged yet.
+discover: list pages in each host's llms.txt or sitemap that look relevant and are not registered or triaged yet.
 propose:  turn one candidate URL into a registry "sources" entry that passes the tool's own checks.
 adopt:    add the sources and reviewed rules of a spec file to registry.json (a dry run unless --write).
+rereview: for the rules whose source changed since they were reviewed (drift), compare the old body with the new one and, with --write,
+          renew the review of the rules whose excerpt and surroundings did not change. The old body is never committed.
+review:   a person goes through rules at a terminal and records "human:<name>" for the ones they review (interactive terminals only).
 docs:     check, or with --write refresh, the numbers and tables in README.md and docs/ that come from registry.json.
 audit:    check, from a run and the agent's own transcript, that the skill's procedure was followed and reported straight.
-discover, propose and audit only print (discover --mark-seen also records the listed pages as triaged). adopt is the one command that
-edits registry.json, and only with --write: which rules a page holds and what they mean is judged by whoever writes the
-spec (docs/maintenance.md); adopt checks the spec against the live page and records who reviewed. Standard library only.
+discover, propose and audit only print (discover --mark-seen also records the listed pages as triaged). adopt, rereview and review
+edit registry.json, and only adopt and rereview with --write: which rules a page holds and what they mean is judged by whoever writes
+the spec (docs/maintenance.md); adopt checks the spec against the live page and records who reviewed. Standard library only.
 """
 import argparse
+import difflib
+import html
 import itertools
 import json
 import os
@@ -22,12 +27,14 @@ import urllib.parse
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+ROOT = HERE.parent
 sys.path.insert(0, str(HERE.parent / ".claude" / "skills" / "official-prompt-tailor" / "scripts"))
 import evidence as ev  # noqa: E402
 
 CONFIG, SEEN = HERE / "discovery.json", HERE / "discovery-seen.json"
 LINK = re.compile(r"\[([^\]]*)\]\((https?://[^)\s]+)\)")
-INDEX_F = {"index_id": (str, 1), "url": (str, 1), "scope": (list, 1), "keywords": (list, 0), "exclude": (list, 0)}
+INDEX_F = {"index_id": (str, 1), "url": (str, 1), "scope": (list, 1), "keywords": (list, 0), "exclude": (list, 0), "format": (str, 0)}
+FORMATS = ("llms", "sitemap")  # what the index is: an llms.txt (the default) or a sitemap.xml
 
 
 def page_key(url):
@@ -45,6 +52,8 @@ def load_config():
     for index in cfg["indexes"]:
         ev.shape(index, INDEX_F, "discovery.index")
         ev.safe_id(index["index_id"], "index_id")
+        if index.get("format", "llms") not in FORMATS:
+            raise ev.ContractError(f"index {index['index_id']}: format must be one of {FORMATS}")
         if ev.url_key(index["url"]) is None or "#" in index["url"]:
             raise ev.ContractError(f"index {index['index_id']}: url must be https without a fragment")
         ev.strs(index["scope"], "scope")
@@ -99,16 +108,90 @@ def candidates(index, default_keywords, pages, skip_keys):
     return found
 
 
-def fetch_index(index, tmp):
-    """(entry, llms.txt text or None). A failed answer is looked at once more, as drift does: one answer can be a dropped
-    connection or a CDN node mid-deploy. Each look gets its own directory because fetch_live never overwrites a snapshot."""
+def fetch_index(index, tmp, process=None):
+    """(entry, the index's text or None): an llms.txt, or with `process` (sitemap_body) a sitemap. A failed answer is looked at once more, as
+    drift does: one answer can be a dropped connection or a CDN node mid-deploy. Each look gets its own directory because fetch_live never
+    overwrites a snapshot. A refusal (HTTP 403, a bot check) is reported as it is: nothing here tries to get past it."""
     for look in ("look-1", "look-2"):
-        e = ev.fetch_live(index_source(index), tmp / look)
+        e = ev.fetch_live(index_source(index), tmp / look, process)
         if e["status"] == "live":
             return e, ev.read_text(tmp / look / e["body_path"])
         if look == "look-1":
             time.sleep(ev.RETRY_WAIT)
     return e, None
+
+
+# A sitemap.xml lists a site's pages the way an llms.txt does, for the sites that have no llms.txt. An index of sitemaps points to others.
+SITEMAP_TYPES = ("application/xml", "text/xml", "text/plain")
+SITEMAP_LOC = re.compile(r"<loc>\s*([^<]*?)\s*</loc>", re.I)
+MAX_CHILD_SITEMAPS = 30  # child sitemaps read per index; more are reported, not read
+
+
+def sitemap_body(src, raw, content_type):
+    """fetch_live's `process` for a sitemap: a first line saying which kind it is (`# urlset` or `# sitemapindex`), then each <loc> address.
+    The XML is not parsed (a DOCTYPE or an entity is never expanded): only the addresses are read out of it."""
+    ctype = (content_type or "").split(";")[0].strip().lower()
+    charset = re.search(r"charset=([^;\s]+)", content_type or "", re.I)
+    if charset and charset.group(1).strip("\"'").lower().replace("_", "-") not in ("utf-8", "utf8"):
+        raise ev.Blocked("unsupported_charset")
+    if ctype not in SITEMAP_TYPES:
+        raise ev.Blocked(f"unexpected_content_type:{ctype}")
+    try:
+        text = ev.norm(raw.decode("utf-8"))
+    except UnicodeDecodeError:
+        raise ev.Blocked("not_utf8")
+    kind = "sitemapindex" if re.search(r"<sitemapindex\b", text) else ("urlset" if re.search(r"<urlset\b", text) else None)
+    if kind is None:
+        raise ev.Blocked("not_a_sitemap")
+    locs = [html.unescape(x) for x in SITEMAP_LOC.findall(text)]
+    if not locs:
+        raise ev.Blocked("sitemap_without_locations")
+    return "\n".join([f"# {kind}"] + locs) + "\n"
+
+
+def sitemap_locs(body):
+    lines = body.split("\n")
+    return lines[0][2:], [x for x in lines[1:] if x]
+
+
+def sitemap_pages(index, locs):
+    """key -> (title, https url) for the pages of the index's own host. A sitemap has no titles: the last path segment stands for one."""
+    host, pages = page_key(index["url"]).split("/", 1)[0], {}
+    for url in locs:
+        key = page_key(url)
+        if urllib.parse.urlsplit(url).scheme in ("http", "https") and key.split("/", 1)[0] == host:
+            pages.setdefault(key, (re.sub(r"[-_]+", " ", urllib.parse.unquote(key.rsplit("/", 1)[-1])), re.sub(r"^http://", "https://", url)))
+    return pages
+
+
+def read_sitemap(index, tmp):
+    """(entry, pages, problems, skipped): the index's own sitemap and, if it lists sitemaps, each of those that is https on the same host
+    (at most MAX_CHILD_SITEMAPS). What should have been read and was not is named in `problems`; the pages of what could be read are still
+    returned. `skipped` holds the children left alone on purpose: another host's sitemap is not ours to list from."""
+    e, text = fetch_index(index, tmp / "top", sitemap_body)
+    if text is None:
+        return e, {}, [], []
+    kind, locs = sitemap_locs(text)
+    if kind == "urlset":
+        return e, sitemap_pages(index, locs), [], []
+    host, problems, pages = page_key(index["url"]).split("/", 1)[0], [], {}
+    children = list(dict.fromkeys(locs))
+    same = [u for u in children if ev.url_key(u) is not None and "#" not in u and page_key(u).split("/", 1)[0] == host]
+    skipped = [u for u in children if u not in same]
+    if len(same) > MAX_CHILD_SITEMAPS:
+        problems.append(f"{len(same) - MAX_CHILD_SITEMAPS} child sitemaps beyond the first {MAX_CHILD_SITEMAPS} were not read")
+    for n, url in enumerate(same[:MAX_CHILD_SITEMAPS], 1):
+        ce, ctext = fetch_index({**index, "index_id": f"{index['index_id']}-{n}", "url": url}, tmp / f"child-{n}", sitemap_body)
+        if ctext is None:
+            problems.append(f"{url}: {ce['error']}")
+            continue
+        ckind, clocs = sitemap_locs(ctext)
+        if ckind != "urlset":
+            problems.append(f"{url}: a sitemap index inside a sitemap index is not followed")
+            continue
+        for key, page in sitemap_pages(index, clocs).items():
+            pages.setdefault(key, page)
+    return e, pages, problems, skipped
 
 
 def discover(mark_seen=False):
@@ -119,11 +202,16 @@ def discover(mark_seen=False):
     with tempfile.TemporaryDirectory() as tmp_name:
         tmp = Path(tmp_name)
         for index in cfg["indexes"]:
-            e, text = fetch_index(index, tmp)
-            row = {"index_id": index["index_id"], "status": e["status"], "error": e["error"], "pages": 0, "candidates": []}
-            if text is not None:
-                pages = index_pages(index, text)
-                row["pages"], row["candidates"] = len(pages), candidates(index, cfg["keywords"], pages, skip_keys)
+            if index.get("format", "llms") == "sitemap":
+                e, pages, problems, skipped = read_sitemap(index, tmp)
+                shown = "; ".join(problems[:3]) + (f" (and {len(problems) - 3} more)" if len(problems) > 3 else "")
+                row = {"index_id": index["index_id"], "status": "partial" if problems and e["status"] == "live" else e["status"],
+                       "error": e["error"] or shown or None, "pages": 0, "candidates": [], "skipped": skipped}
+            else:
+                e, text = fetch_index(index, tmp)
+                pages = index_pages(index, text) if text is not None else {}
+                row = {"index_id": index["index_id"], "status": e["status"], "error": e["error"], "pages": 0, "candidates": []}
+            row["pages"], row["candidates"] = len(pages), candidates(index, cfg["keywords"], pages, skip_keys)
             rows.append(row)
     listed = {c["key"] for row in rows for c in row["candidates"]}
     if mark_seen:
@@ -330,11 +418,31 @@ def wire(reg, source, rules):
     return sorted(purposes)
 
 
-def adopt(spec_path, write=False):
+def load_for_edit():
+    """The registry, after checking that dump_registry would write it back byte for byte: an edit then changes only what it means to change."""
     reg, _ = ev.load_registry()
-    original = ev.REGISTRY_PATH.read_bytes()
-    if dump_registry(reg).encode("utf-8") != original:
+    if dump_registry(reg).encode("utf-8") != ev.REGISTRY_PATH.read_bytes():
         raise ev.ContractError("registry.json is not in the layout dump_registry writes (one compact record per line): put it back first")
+    return reg
+
+
+def checked_registry_text(reg):
+    """The registry as dump_registry writes it, once validate_registry and registry_problems accept it."""
+    ev.validate_registry(reg)
+    problems = registry_problems(reg)
+    if problems:
+        raise ev.ContractError("; ".join(problems))
+    return dump_registry(reg).encode("utf-8")
+
+
+def replace_registry(text):
+    tmp = ev.REGISTRY_PATH.with_name(ev.REGISTRY_PATH.name + ".tmp")
+    tmp.write_bytes(text)
+    os.replace(tmp, ev.REGISTRY_PATH)
+
+
+def adopt(spec_path, write=False):
+    reg = load_for_edit()
     spec = ev.load_json(spec_path)
     ev.shape(spec, SPEC_F, "spec")
     if spec["schema_version"] != 1 or not spec["reviewer_id"].strip():
@@ -355,21 +463,266 @@ def adopt(spec_path, write=False):
         reg["rules"].extend(rules)
         rows.append({"source_id": source["source_id"], "body_sha256": sha, "extraction": source["extraction"],
                      "rules": [r["rule_id"] for r in rules], "wired": wire(reg, source, rules)})
-    ev.validate_registry(reg)
-    problems = registry_problems(reg)
-    if problems:
-        raise ev.ContractError("; ".join(problems))
-    text = dump_registry(reg).encode("utf-8")
+    text = checked_registry_text(reg)
     if write:
-        tmp = ev.REGISTRY_PATH.with_name(ev.REGISTRY_PATH.name + ".tmp")
-        tmp.write_bytes(text)
-        os.replace(tmp, ev.REGISTRY_PATH)
+        replace_registry(text)
     return {"schema_version": 1, "written": write, "reviewer_id": spec["reviewer_id"], "sources": rows,
             "registry": {"sources": len(reg["sources"]), "rules": len(reg["rules"]), "bytes": len(text)}}
 
 
+# ---------------------------------------------------------------- rereview
+# The bodies a rule was reviewed against are kept here, so that when the page changes there is an old body to compare with. Local only:
+# a page's full text is not committed (copyright), and outputs/ is not tracked (.gitignore). A clone that never ran rereview has none; the
+# snapshots of past runs under outputs/ (or --old) are looked at too.
+STORE = ROOT / "outputs" / "reviewed-bodies"
+CONTEXT_LINES = 5  # lines before and after the excerpt that must also be unchanged for a rule to be renewed without a person reading the page
+MACHINE_REVIEWER = "tools/maintain.py rereview (excerpt and surrounding lines unchanged; mechanical; not human)"
+LEDGER, LEDGER_F = HERE / "human-reviews.json", {"rule_id": (str, 1), "reviewer_id": (str, 1), "reviewed_at": (str, 1), "source_body_sha256": (str, 1)}
+
+
+def stored_body(source_id, sha, dirs=()):
+    """The body of source_id whose SHA-256 is sha, or None: from the store, then from the snapshots of past runs under outputs/ and `dirs`."""
+    found = [STORE / source_id / f"{sha}.txt"]
+    for d in [ROOT / "outputs", *map(Path, dirs)]:
+        found += sorted(d.glob(f"**/snapshots/{source_id}/body.txt"))
+    for path in found:
+        try:
+            raw = path.read_bytes()
+            if ev.sha_bytes(raw) == sha:
+                return raw.decode("utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+    return None
+
+
+def keep_body(source_id, sha, body):
+    """Keep the body a rule is reviewed against (only if it really has that SHA-256). -> whether a file was written."""
+    path = STORE / source_id / f"{sha}.txt"
+    if path.exists() or ev.sha_bytes(body.encode("utf-8")) != sha:
+        return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        f.write(body)
+    return True
+
+
+def clip(line, width=160):
+    return line if len(line) <= width else line[:width - 1] + "…"
+
+
+def neighbourhood(body, excerpt, context):
+    """The excerpt's place in a body: its line numbers, the lines around it, the heading above it and how often it occurs. None if it is not there."""
+    at = body.find(excerpt)
+    if at < 0:
+        return None
+    lines = body.split("\n")
+    first = body.count("\n", 0, at)
+    last = first + excerpt.count("\n")
+    heading = next((lines[i] for i in range(first, -1, -1) if lines[i].startswith("#")), "")
+    return {"at": [first + 1, last + 1], "heading": heading, "count": body.count(excerpt), "lines": lines[max(0, first - context):last + context + 1]}
+
+
+def judge(rule, new_body, old_body, context):
+    """How a drifted rule stands. class: excerpt_missing (it cannot be renewed) | old_body_unavailable | context_changed (a person reads the diff)
+    | context_unchanged (the excerpt, `context` lines either side, the heading above it and its number of occurrences are the same in the old
+    and the new body: the page changed somewhere else)."""
+    new = neighbourhood(new_body, rule["source_excerpt"], context)
+    if new is None:
+        return {"class": "excerpt_missing", "lines": None}
+    if old_body is None:
+        return {"class": "old_body_unavailable", "lines": new["at"]}
+    old = neighbourhood(old_body, rule["source_excerpt"], context)
+    if old is not None and all(old[k] == new[k] for k in ("lines", "heading", "count")):
+        return {"class": "context_unchanged", "lines": new["at"]}
+    shown = lambda n: ([n["heading"]] if n else []) + (n["lines"] if n else [])  # noqa: E731
+    diff = list(difflib.unified_diff(shown(old), shown(new), "old", "new", lineterm="", n=1))
+    return {"class": "context_changed", "lines": new["at"], "diff": [clip(x) for x in diff[:40]] if old else ["(the excerpt is not in the old body)"]}
+
+
+def body_hunks(old, new, limit=20):
+    """The places where two bodies differ, line by line: {"count": n, "hunks": [first `limit`, each side cut to 8 lines]}."""
+    a, b = old.split("\n"), new.split("\n")
+    hunks = [{"old_lines": [i1 + 1, i2], "new_lines": [j1 + 1, j2], "removed": [clip(x) for x in a[i1:i2][:8]], "added": [clip(x) for x in b[j1:j2][:8]]}
+             for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes() if tag != "equal"]
+    return {"count": len(hunks), "hunks": hunks[:limit]}
+
+
+def look_all(reg, only):
+    """(observed, rule states) as drift sees them: every source once, and the ones in doubt (a changed rule, no answer) once more, because
+    one answer can be a CDN node mid-deploy or a dropped connection."""
+    observed = ev._observe_live(reg["sources"], only)
+    states = ev._rule_states(reg, observed)
+    doubtful = {s["source_id"] for s in states if s["state"] in ("changed", "excerpt_missing")} | {k for k, o in observed.items() if o.body is None}
+    if doubtful:
+        time.sleep(ev.RETRY_WAIT)
+        observed.update(ev._observe_live([s for s in reg["sources"] if s["source_id"] in doubtful], ()))
+        states = ev._rule_states(reg, observed)
+    return observed, states
+
+
+def agent_reviewer(text):
+    """The reviewer_id rereview writes. A person's review is recorded by `review`, never by this command."""
+    if text is None:
+        return MACHINE_REVIEWER
+    if text.strip().startswith(ev.HUMAN_REVIEWER) or "not human" not in text:
+        raise ev.ContractError('--reviewer must say it is not a person (…; not human): rereview never records a human review, `review` does')
+    return text.strip()
+
+
+def rereview(only=(), rule_ids=(), run=None, old_dirs=(), context=CONTEXT_LINES, accept=(), reviewer=None, write=False):
+    reg = load_for_edit() if write else ev.load_registry()[0]
+    rules = {r["rule_id"]: r for r in reg["rules"]}
+    unknown = sorted((set(rule_ids) | set(accept)) - set(rules))
+    if unknown:
+        raise ev.ContractError(f"unknown rules {unknown}")
+    if accept and reviewer is None:
+        raise ev.ContractError("--accept needs --reviewer: say who judged that the rule still holds (…; not human)")
+    reviewer = agent_reviewer(reviewer)
+    only = set(only) | {rules[r]["source_id"] for r in [*rule_ids, *accept]}
+    if only - {s["source_id"] for s in reg["sources"]}:
+        raise ev.ContractError(f"unknown source ids {sorted(only - {s['source_id'] for s in reg['sources']})}")
+    if run:
+        observed = ev._observe_run(Path(run), only)
+        states = ev._rule_states(reg, observed)
+    else:
+        observed, states = look_all(reg, only)
+    kept = sum(keep_body(sid, o.sha256, o.body) for sid, o in observed.items()
+               if o.body is not None and any(r["source_id"] == sid and r["source_body_sha256"] == o.sha256 for r in reg["rules"]))
+    olds, rows = {}, []
+    for st in states:
+        if st["state"] not in ("changed", "excerpt_missing") or (rule_ids and st["rule_id"] not in rule_ids):
+            continue
+        rule, o = rules[st["rule_id"]], observed[st["source_id"]]
+        key = (rule["source_id"], rule["source_body_sha256"])
+        if key not in olds:
+            olds[key] = stored_body(*key, old_dirs)
+        row = {"rule_id": rule["rule_id"], "source_id": rule["source_id"], "state": st["state"], **judge(rule, o.body, olds[key], context)}
+        row["renewable"] = row["class"] == "context_unchanged" or (rule["rule_id"] in accept and row["class"] in ("context_changed", "old_body_unavailable"))
+        row["renewed"] = False
+        rows.append(row)
+    sources = []
+    for sid, o in observed.items():
+        mine = [r for r in rows if r["source_id"] == sid]
+        if not mine and o.body is not None:
+            continue
+        entry = {"source_id": sid, "status": o.status, "error": o.error, "body_sha256": o.sha256}
+        if mine:
+            old_shas = sorted({rules[r["rule_id"]]["source_body_sha256"] for r in mine})
+            entry["changes"] = [{"from_sha256": s, **body_hunks(olds[(sid, s)], o.body)} if olds[(sid, s)] is not None
+                                else {"from_sha256": s, "old_body": "unavailable"} for s in old_shas]
+        sources.append(entry)
+    now = ev.iso(ev.utcnow())
+    if write and any(r["renewable"] for r in rows):
+        for row in rows:
+            if row["renewable"]:
+                o = observed[row["source_id"]]
+                rules[row["rule_id"]].update(source_body_sha256=o.sha256, reviewed_at=now, reviewer_id=reviewer)
+                row["renewed"] = True
+        replace_registry(checked_registry_text(reg))
+        kept += sum(keep_body(r["source_id"], observed[r["source_id"]].sha256, observed[r["source_id"]].body) for r in rows if r["renewed"])
+    pending = [r for r in rows if not r["renewed"]]
+    if pending:
+        verdict = "NEEDS_REVIEW" if any(not r["renewable"] for r in pending) else "READY_TO_STAMP"
+    elif rows:
+        verdict = "STAMPED"
+    else:
+        verdict = "INCOMPLETE" if any(o.body is None for o in observed.values()) else "CURRENT"
+    return {"schema_version": 1, "checked_at": now, "mode": "run" if run else "live", "context_lines": context, "verdict": verdict,
+            "reviewer_id": reviewer if write else None, "written": bool(write and any(r["renewed"] for r in rows)),
+            "bodies_kept": kept, "sources": sources, "rules": rows}
+
+
+# ---------------------------------------------------------------- review (a person, at a terminal)
+def interactive():
+    return sys.stdin.isatty() and sys.stdout.isatty() and not os.environ.get("CI")
+
+
+def human_ledger():
+    """The reviews `review` recorded, oldest first. A rule may carry a human reviewer_id only if the ledger has the same review
+    (tests/test_official_prompt_tailor.py): an agent that edits registry.json by hand does not leave one."""
+    entries = ev.load_json(LEDGER) if LEDGER.exists() else []
+    if not isinstance(entries, list):
+        raise ev.ContractError(f"{LEDGER.name}: list expected")
+    for e in entries:
+        ev.shape(e, LEDGER_F, f"{LEDGER.name} entry")
+    return entries
+
+
+def rule_card(rule, source, number, total, body, sha, context):
+    near = neighbourhood(body, rule["source_excerpt"], context) if body is not None else None
+    lines = [f"━━ [{number}/{total}] {rule['rule_id']} ({rule['kind']}) ━━", f"資料: {source['source_id']}  {source['allowed_urls'][0]}",
+             f"対象: {', '.join(rule['target_ids'])} / surfaces: {', '.join(rule['surfaces'])} / models: {', '.join(rule['models'])} / purposes: {', '.join(rule['purposes'])}",
+             "使える前提:"] + [f"  - {x}" for x in rule["preconditions"]] + ["使えない場合:"] + [f"  - {x}" for x in rule["exclusions"]]
+    lines += [f"意味: {rule['meaning']}", f"許される変更: {rule['allowed_change']}", f"引用: {rule['source_excerpt']}"]
+    if near is None:
+        lines.append("本文: 引用が本文にありません(取得できないか、本文が変わっています)。記録できません。")
+    else:
+        lines.append(f"本文の{near['at'][0]}〜{near['at'][1]}行目と、前後 {context} 行" +
+                     ("(審査したときと同じ本文)" if sha == rule["source_body_sha256"] else "(審査のあとで本文が変わっています)") + ":")
+        lines += [f"  {n:5d}  {x}" for n, x in enumerate(near["lines"], max(1, near["at"][0] - context))]
+    return "\n".join(lines)
+
+
+def review(rule_ids=(), only=(), run=None, context=CONTEXT_LINES, limit=None, ask=input, say=print):
+    """Show each rule with the page it cites; for the ones whose name the reviewer types, record human:<name> against the body they saw."""
+    if not interactive():
+        raise ev.Unreadable("review needs an interactive terminal (stdin and stdout are terminals, and CI is not set): a person's review is not written from a script or an agent's tool call")
+    reg = load_for_edit()
+    srcs = {s["source_id"]: s for s in reg["sources"]}
+    unknown = sorted((set(rule_ids) - {r["rule_id"] for r in reg["rules"]}) | (set(only) - set(srcs)))
+    if unknown:
+        raise ev.ContractError(f"unknown rule or source ids {unknown}")
+    chosen = [r for r in reg["rules"] if r["review_status"] == "reviewed" and not ev.human_reviewed(r)
+              and (not rule_ids or r["rule_id"] in rule_ids) and (not only or r["source_id"] in only)][:limit]
+    seen, recorded, skipped, quit_ = {}, [], 0, False
+    for number, rule in enumerate(chosen, 1):
+        sid = rule["source_id"]
+        if sid not in seen:
+            try:
+                if run:
+                    o = ev._observe_run(Path(run), {sid}).get(sid)
+                    seen[sid] = (o.body, o.sha256) if o and o.body is not None else (None, None)
+                else:
+                    body, sha = observe(srcs[sid])
+                    seen[sid] = (body, sha)
+            except ev.Unreadable as e:
+                say(f"{sid}: 本文を取得できません({e})")
+                seen[sid] = (None, None)
+        body, sha = seen[sid]
+        say(rule_card(rule, srcs[sid], number, len(chosen), body, sha, context))
+        if body is None or rule["source_excerpt"] not in body:
+            skipped += 1
+            continue
+        try:
+            name = ask("この規則を審査した人の名前(空: 飛ばす / q: 終了): ").strip()
+            if name and name != "q" and ask(f"human:{name} を {rule['rule_id']} に書きます。よければ y: ").strip().lower() not in ("y", "yes"):
+                name = ""
+        except EOFError:
+            name = "q"
+        if name == "q":
+            quit_ = True
+            break
+        if not name or len(name) > 80:
+            skipped += 1
+            say("飛ばしました。" if not name else "名前は 80 文字までです。飛ばしました。")
+            continue
+        before = {k: rule[k] for k in ("source_body_sha256", "reviewed_at", "reviewer_id")}
+        rule.update(source_body_sha256=sha, reviewed_at=ev.iso(ev.utcnow()), reviewer_id=ev.HUMAN_REVIEWER + name)
+        try:
+            text = checked_registry_text(reg)
+        except ev.ContractError:
+            rule.update(before)
+            raise
+        replace_registry(text)
+        entries = human_ledger() + [{"rule_id": rule["rule_id"], "reviewer_id": rule["reviewer_id"], "reviewed_at": rule["reviewed_at"], "source_body_sha256": sha}]
+        LEDGER.write_text(json.dumps(entries, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        keep_body(sid, sha, body)
+        recorded.append(rule["rule_id"])
+        say(f"記録しました: {rule['rule_id']} ← {rule['reviewer_id']}")
+    return {"schema_version": 1, "recorded": recorded, "skipped": skipped, "quit": quit_, "remaining": len(chosen) - len(recorded) - skipped}
+
+
 # ---------------------------------------------------------------- docs
-ROOT = HERE.parent
 README_PATH, TARGETS_PATH, TRUST_PATH = ROOT / "README.md", ROOT / "docs" / "targets.md", ROOT / "docs" / "trust-boundary.md"
 ROUTING_LABELS = {"chatgpt": "ChatGPT Chat", "chatgpt-work": "ChatGPT Work", "codex": "Codex", "claude": "Claude チャット",
                   "claude-cowork": "Claude Cowork", "claude-code": "Claude Code", "gemini": "Gemini Apps(通常・Gems・Apps skill)",
@@ -495,14 +848,16 @@ def docs(write=False):
 # ---------------------------------------------------------------- audit
 SCALE = {"参照検証": "PASS_LIVE|PASS_CACHE|FAIL|INCOMPLETE", "意味審査": "NOT_REVIEWED|INCOMPLETE|PASS|FAIL",
          "効果": "IMPROVED_ON_TEST_SET|REGRESSED|NO_CLEAR_IMPROVEMENT|NOT_EVALUATED|INCOMPLETE"}
-NEGATED = re.compile(r"ない|ません|不|未")
+NEGATED = re.compile(r"ない|なく|ません|不|未")  # 「検証済みではなく候補」も否定
 LITERAL = re.compile(r"`[^`\n]+`|[A-Za-z_][A-Za-z0-9_./:\-]*[A-Za-z0-9_]|\d+(?:\.\d+)*")
 
 
 def transcript_texts(path):
-    """(the first user text, the last assistant text) of a Claude Code transcript's own thread."""
+    """(the first user text, the answer) of a Claude Code transcript's own thread. The answer is the last assistant text, or, for a
+    subagent that hands its report back through the SubagentHandback tool, that report: the tool call is where its answer is."""
     rows, own = ev.read_transcript(path)
     prompt = answer = ""
+    handed = False  # once the report is handed back, text after it is not the answer
     for _, d in rows:
         msg = d.get("message") if isinstance(d, dict) else None
         if not isinstance(msg, dict) or (d.get("isSidechain") and not own):
@@ -511,9 +866,25 @@ def transcript_texts(path):
         text = "\n".join(b.get("text", "") for b in blocks if isinstance(b, dict) and b.get("type") == "text")
         if text.strip() and d.get("type") == "user" and not prompt:
             prompt = text
-        elif text.strip() and d.get("type") == "assistant":
-            answer = text
+        elif d.get("type") == "assistant":
+            for b in blocks:
+                if not isinstance(b, dict):
+                    continue
+                if b.get("type") == "tool_use" and b.get("name") == "SubagentHandback" and isinstance(b.get("input", {}).get("message"), str):
+                    answer, handed = b["input"]["message"], True
+                elif b.get("type") == "text" and b.get("text", "").strip() and not handed:
+                    answer = b["text"]
     return prompt, answer
+
+
+def expand_variables(command):
+    """The command with the shell variables it assigns itself filled in (`S=…/evidence.py; python3 $S drift`), and a `for c in a b; do … $c …`
+    loop written out once per word: the audit looks for the commands that were run, not for how they were spelled."""
+    values = {k: v.strip("'\"") for k, v in re.findall(r"(?:^|[;&|\s])([A-Za-z_]\w*)=(\S+?);?(?=\s|$)", command)}
+    text = command
+    for var, words in re.findall(r"\bfor\s+([A-Za-z_]\w*)\s+in\s+([^;\n]+?)\s*;", command):
+        text += "\n" + "\n".join(re.sub(r"\$\{?%s\}?" % var, w, command) for w in words.split())
+    return re.sub(r"\$\{?([A-Za-z_]\w*)\}?", lambda m: values.get(m.group(1), m.group(0)), text)
 
 
 def squash(text):
@@ -544,7 +915,7 @@ def audit(run, transcript):
     def check(cid, ok, detail, level="FAIL"):
         checks.append({"id": cid, "status": "PASS" if ok else level, "detail": detail})
 
-    bash = [(e["seq"], str(e["input"].get("command", ""))) for e in events if e["kind"] == "use" and e["name"] == "Bash"]
+    bash = [(e["seq"], expand_variables(str(e["input"].get("command", "")))) for e in events if e["kind"] == "use" and e["name"] == "Bash"]
     ran = lambda name: [s for s, c in bash if re.search(r"evidence\.py\s+" + name + r"\b", c)]  # noqa: E731
     gen_paths = [run / "optimized.md", run / "recommendations.json"]
     writes = [e["seq"] for e in events if e["kind"] == "use" and (
@@ -562,8 +933,11 @@ def audit(run, transcript):
     first_verify = min((v for v in verify if first_write is not None and v > first_write), default=None)  # a later verify may re-check; the report only needs one before it
     check("sources_after_verify", first_verify is not None and any(s > first_verify for s in sources), where)
     unread = [r["source_id"] for r in seen["selected"] if r["read"]["status"] != "observed"]  # verify asks for a read of every selected source
-    check("selected_bodies_were_read", bool(seen["selected"]) and not unread,
-          f"not shown by a Read before the first write: {unread}" if unread else "every selected source was shown by a Read before the first write")
+    if seen["selected"]:
+        check("selected_bodies_were_read", not unread,
+              f"not shown by a Read before the first write: {unread}" if unread else "every selected source was shown by a Read before the first write")
+    else:  # an input none of whose routes applies selects no source (SKILL.md, "資料が 0 件"): there is nothing to read
+        checks.append({"id": "selected_bodies_were_read", "status": "NA", "detail": "no source was selected for this input, so there was nothing to read"})
     own_logs = [p.strip("'\"") for _, c in bash for p in re.findall(r"--host-log[ =]+(\S+)", c)]
     check("no_log_the_user_did_not_give", all(p in prompt for p in own_logs), f"--host-log used with {[p for p in own_logs if p not in prompt]}")
     whole = [e for e in events if e["kind"] == "use" and (
@@ -615,6 +989,21 @@ def main(argv=None):
     a = sub.add_parser("adopt")
     a.add_argument("--spec", required=True)
     a.add_argument("--write", action="store_true")
+    rr = sub.add_parser("rereview")
+    rr.add_argument("--source", action="append", default=[])
+    rr.add_argument("--rule", action="append", default=[])
+    rr.add_argument("--run")
+    rr.add_argument("--old", action="append", default=[])
+    rr.add_argument("--context", type=int, default=CONTEXT_LINES)
+    rr.add_argument("--accept", action="append", default=[])
+    rr.add_argument("--reviewer")
+    rr.add_argument("--write", action="store_true")
+    rv = sub.add_parser("review")
+    rv.add_argument("--source", action="append", default=[])
+    rv.add_argument("--rule", action="append", default=[])
+    rv.add_argument("--run")
+    rv.add_argument("--context", type=int, default=CONTEXT_LINES)
+    rv.add_argument("--limit", type=int)
     dd = sub.add_parser("docs")
     dd.add_argument("--write", action="store_true")
     au = sub.add_parser("audit")
@@ -633,6 +1022,15 @@ def main(argv=None):
             rep = adopt(args.spec, args.write)
             n = sum(len(s["rules"]) for s in rep["sources"])
             return ev._emit("adopt", 0, rep, f"{len(rep['sources'])} sources, {n} rules, " + ("written" if rep["written"] else "dry run: nothing written"))
+        if args.cmd == "rereview":
+            rep = rereview(args.source, args.rule, args.run, args.old, args.context, args.accept, args.reviewer, args.write)
+            n = lambda cls: sum(1 for r in rep["rules"] if r["class"] == cls)  # noqa: E731
+            return ev._emit("rereview", 0 if rep["verdict"] in ("CURRENT", "STAMPED") else 2, rep,
+                            f"{rep['verdict']} {len(rep['rules'])} rules (unchanged around the excerpt {n('context_unchanged')}, changed {n('context_changed')}, "
+                            f"no old body {n('old_body_unavailable')}, excerpt gone {n('excerpt_missing')}), " + ("written" if rep["written"] else "nothing written"))
+        if args.cmd == "review":
+            rep = review(args.rule, args.source, args.run, args.context, args.limit)
+            return ev._emit("review", 0, rep, f"{len(rep['recorded'])} recorded, {rep['skipped']} skipped, {rep['remaining']} not looked at")
         if args.cmd == "audit":
             rep = audit(args.run, args.transcript)
             bad = [c["id"] for c in rep["checks"] if c["status"] == "FAIL"]

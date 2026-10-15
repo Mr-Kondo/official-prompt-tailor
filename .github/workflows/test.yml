@@ -17,7 +17,7 @@ jobs:
         # Pinned: ubuntu-latest moves to Ubuntu 26 from 2026-10-19, and actions/python-versions has no Python 3.9
         # build for Ubuntu 26.04. Unpin when it has one, or when 3.9 is dropped.
         os: [ubuntu-24.04]
-        python: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
+        python: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]
         include:
           - {os: macos-latest, python: "3.9"}
           - {os: macos-latest, python: "3.14"}

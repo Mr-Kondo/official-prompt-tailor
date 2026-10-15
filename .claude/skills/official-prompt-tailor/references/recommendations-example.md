@@ -62,6 +62,7 @@ READMEの誤字を修正してください。
 書くときの注意(独立した実行で、迷いや `verify` の失敗が出た点)。
 
 - 原文と改稿の差分は、**すべての区間**を、change の `before_*` / `after_*` の区間で覆う。`verify` は、正規化した原文と改稿を `difflib.SequenceMatcher(None, 原文, 改稿, autojunk=False)` で比べ、`equal` 以外の区間(`get_opcodes()`)のそれぞれが、change の区間の和に入っているかを見る。同じ関数で先に確かめられる。段落を分ける空行だけの追加も、差分の区間になる。覆われていない区間は、`verify` が `unmapped_change` で止める(メッセージの `original[a:b] -> optimized[c:d]` が、覆われていない区間)。change 同士の区間(before 同士、after 同士)は重ねない。
+- `after_excerpt` は、正規化した `optimized.md` の `after_start`〜`after_end` の区間と**完全に一致**させる(一部だけの抜粋だと、`verify` が `after_excerpt_mismatch` で止める)。`exact_excerpt`(資料の短い引用)とは別物。変更前の区間が空の追記なら、追記した文の全体になる。
 - 追記だけの change(原文は何も消えない)は、`before_start` と `before_end` を同じ位置にした空の区間でも通る。ただし文字単位の差分は内容で整列し、同じ文字が繰り返されるとずれる。挿入位置の前後の既存の文を `before` に含めて、その文ごとの置換として記録すると確実。`find` で位置が 1 つに決まらないときは、前後の文脈ごと探す。
 - `source_start_line`〜`source_end_line` は、規則の `source_excerpt` を含む行を含める。含まないと、`verify` が `lines_not_rule_evidence` で止める。`exact_excerpt` は、その行範囲にある短い引用で、change を直接支える部分でよい。
 - 1 つの change に結べる規則は 1 つ。2 つ以上の規則で支えられるときは、その change により直接つながるほうを選び、選ばなかった規則は最終回答の「使わなかった規則」に書く。
