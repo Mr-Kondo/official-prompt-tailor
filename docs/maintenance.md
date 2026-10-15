@@ -249,7 +249,7 @@ ZIP は、同じファイルから、どの機械でも、いつ作っても同�
 
 ```bash
 git archive vX.Y.Z | tar -x -C <空のディレクトリ>
-mkdir <出力先> && python3 <空のディレクトリ>/install.py --zip <出力先>    # 最後の行 "sha256: …" を控える
+mkdir <出力先> && python3 <空のディレクトリ>/install.py --zip <出力先>    # "sha256: …" の行を控える
 curl -s https://api.github.com/repos/Mr-Kondo/official-prompt-tailor/releases/tags/vX.Y.Z    # assets の digest が "sha256:…" で一致する
 ```
 
