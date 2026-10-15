@@ -1,0 +1,37 @@
+name: probe
+
+# Temporary: read-only GETs of public pages, to find the right sitemap addresses. Removed again in the next commit.
+on:
+  push:
+    branches: [claude/gallant-ramanujan-48p2w1]
+    paths: [.github/workflows/probe.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - shell: bash
+        run: |
+          get() {
+            code=$(curl -sS -m 40 -o /tmp/b -D /tmp/h -w '%{http_code} size=%{size_download} type=%{content_type} redirect=%{redirect_url}' "$1" 2>&1) || code="curl failed: $code"
+            echo "== $1 -> $code"
+          }
+          for u in https://developers.openai.com/sitemap.xml https://developers.openai.com/sitemap-index.xml https://developers.openai.com/sitemap_index.xml \
+                   https://developers.openai.com/sitemap-0.xml https://developers.openai.com/llms.txt https://developers.openai.com/robots.txt \
+                   https://developers.openai.com/api/docs/guides/prompt-engineering https://developers.openai.com/api/docs/llms.txt \
+                   https://ai.google.dev/sitemap.xml https://ai.google.dev/sitemap_0_of_1.xml https://ai.google.dev/robots.txt https://ai.google.dev/llms.txt; do
+            get "$u"
+          done
+          echo "---- openai robots.txt"; curl -sS -m 40 https://developers.openai.com/robots.txt | head -20
+          echo "---- ai.google.dev robots.txt"; curl -sS -m 40 https://ai.google.dev/robots.txt | head -20
+          echo "---- ai.google.dev sitemap.xml head"; curl -sS -m 40 https://ai.google.dev/sitemap.xml | head -c 600; echo
+          curl -sS -m 60 -o /tmp/g.xml https://ai.google.dev/sitemap_0_of_1.xml; ls -l /tmp/g.xml
+          echo "locs: $(grep -o '<loc>' /tmp/g.xml | wc -l)"
+          echo "locs under /gemini-api/docs/: $(grep -o '<loc>https://ai.google.dev/gemini-api/docs/[^<]*' /tmp/g.xml | wc -l)"
+          echo "first gemini-api docs locs:"; grep -o '<loc>https://ai.google.dev/gemini-api/docs/[^<]*' /tmp/g.xml | head -8
+          echo "gzip: $(curl -sS -m 60 -H 'Accept-Encoding: gzip' -D - -o /dev/null https://ai.google.dev/sitemap_0_of_1.xml | grep -i -E 'content-(encoding|length)' | tr '\r\n' '  ')"
+          echo "---- openai llms.txt head"; curl -sS -m 40 https://developers.openai.com/llms.txt | head -c 800
