@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""official-prompt-tailor evidence tool: fetch / verify / assess / compare / drift / rules.
+"""official-prompt-tailor evidence tool: fetch / verify / assess / compare / drift / rules / sources.
 
 Standard library only. It verifies recorded evidence (acquisition, hashes, citations,
 scope, change binding, observed reads, review records, evaluation records); it does not
@@ -47,6 +47,7 @@ SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 JUDGMENTS = ("supported", "contradicted", "insufficient")
 CATEGORIES = ("source-support", "scope", "intent-preservation", "unrequested-additions")
 LOG_ADAPTER = "claude-code-transcript-jsonl-v1"
+HUMAN_REVIEWER = "human:"  # a rule's reviewer_id is "human:<name or role>" only when a person reviewed it; nothing else counts
 CHECKS = ("structure", "official_acquisition", "body_integrity", "citation", "scope", "rule_review",
           "change_binding", "read_observation")
 
@@ -175,6 +176,10 @@ def safe_join(base, rel):
 def in_list(listed, value):
     """'all' matches anything; 'unknown' only ever matches 'all'."""
     return "all" in listed or (value != "unknown" and value in listed)
+
+
+def human_reviewed(rule):
+    return rule["reviewer_id"] is not None and rule["reviewer_id"].startswith(HUMAN_REVIEWER)
 
 
 S, SN, I, L, D, B, N = str, (str, type(None)), int, list, dict, bool, (int, float)
@@ -466,6 +471,8 @@ def validate_registry(reg):
         if r["review_status"] == "reviewed":
             if not (r["source_body_sha256"] and SHA_RE.match(r["source_body_sha256"]) and r["reviewer_id"]):
                 raise ContractError(f"rule {r['rule_id']}: reviewed rule needs hash and reviewer_id")
+            if human_reviewed(r) and not r["reviewer_id"][len(HUMAN_REVIEWER):].strip():
+                raise ContractError(f"rule {r['rule_id']}: a person's reviewer_id needs a name after '{HUMAN_REVIEWER}'")
             parse_ts(r["reviewed_at"], f"rule {r['rule_id']}.reviewed_at")
     uniq([r["rule_id"] for r in reg["rules"]], "rule_id")
 
@@ -484,18 +491,64 @@ def load_registry(path=None):
     return reg, sha_bytes(raw)
 
 
+def route_sources(reg, inp):
+    """What the target routes for this purpose and surface (the model is not looked at yet).
+    -> (routed, via, missed): routed = source ids in fetch order, required ones first; via = the route that chose each;
+    missed = for each source the target lists but did not route, the conditional routes that did not match, and which half failed."""
+    t = next(t for t in reg["targets"] if t["target_id"] == inp["target_id"])
+    routed, via, missed = list(t["required_sources"]), {i: {"route": "required"} for i in t["required_sources"]}, {}
+    for c in t["conditional_sources"]:
+        purpose_ok = "all" in c["purposes"] or inp["purpose"] in c["purposes"]
+        surface_ok = in_list(c["surfaces"], inp["target_surface"])
+        for i in c["source_ids"]:
+            if purpose_ok and surface_ok:
+                if i not in routed:
+                    routed.append(i)
+                    via[i] = {"route": "conditional", "purposes": c["purposes"], "surfaces": c["surfaces"]}
+            else:
+                missed.setdefault(i, []).append({"purposes": c["purposes"], "surfaces": c["surfaces"],
+                                                 "purpose_ok": purpose_ok, "surface_ok": surface_ok})
+    return routed, via, {i: m for i, m in missed.items() if i not in via}
+
+
 def select_sources(reg, inp):
     """Sources required for this target + those whose purpose AND surface conditions both match.
     A source limited to certain models is kept only for those models: its rules cannot apply to any other."""
     if inp["target_id"] == "unresolved":
         return []
-    t = next(t for t in reg["targets"] if t["target_id"] == inp["target_id"])
-    ids = list(t["required_sources"])
-    for c in t["conditional_sources"]:
-        if ("all" in c["purposes"] or inp["purpose"] in c["purposes"]) and in_list(c["surfaces"], inp["target_surface"]):
-            ids += [i for i in c["source_ids"] if i not in ids]
     models = {s["source_id"]: s["models"] for s in reg["sources"]}
-    return [i for i in ids if in_list(models[i], inp["model_id"])]
+    return [i for i in route_sources(reg, inp)[0] if in_list(models[i], inp["model_id"])]
+
+
+def explain_sources(reg, inp):
+    """select_sources, and why each other source of the target was left out (same routing; a test pins the two together).
+    -> {"selected": [{source_id, models, route, purposes?, surfaces?}], "skipped": [{source_id, models, reason, ...}]};
+    reason: route_not_matched (purpose and/or surface), model_mismatch, model_unknown (the model is not given)."""
+    if inp["target_id"] == "unresolved":
+        return {"selected": [], "skipped": []}
+    routed, via, missed = route_sources(reg, inp)
+    models = {s["source_id"]: s["models"] for s in reg["sources"]}
+    selected, skipped = [], []
+    for i in routed:
+        if in_list(models[i], inp["model_id"]):
+            selected.append({"source_id": i, "models": models[i], **via[i]})
+        else:
+            skipped.append({"source_id": i, "models": models[i],
+                            "reason": "model_unknown" if inp["model_id"] == "unknown" else "model_mismatch"})
+    for i, routes in missed.items():
+        near = min(routes, key=lambda r: (not r["purpose_ok"]) + (not r["surface_ok"]))
+        skipped.append({"source_id": i, "models": models[i], "reason": "route_not_matched", **near})
+    return {"selected": selected, "skipped": skipped}
+
+
+def model_hint(reg, model_id):
+    """Registered model ids that differ from model_id only in spelling (case, '.', '_' or spaces, a 'claude-' prefix, a date suffix).
+    A hint for the reader: the selection itself needs the exact id."""
+    def key(m):
+        m = re.sub(r"[\s._]+", "-", m.strip().lower())
+        return re.sub(r"^claude-", "", re.sub(r"-(\d{8}|\d{4}-\d{2}-\d{2})$", "", m))
+    registered = sorted({m for s in reg["sources"] for m in s["models"] if m != "all"})
+    return [] if model_id in registered else [m for m in registered if key(m) == key(model_id)]
 
 
 # ---------------------------------------------------------------- input / entries
@@ -794,9 +847,27 @@ def drift(run=None, only=()):
             "rules": rules}
 
 
+def _applicable(reg, inp, acq):
+    """Reviewed rules in scope for the input (the checks verify makes) and grounded in a source the run fetched."""
+    srcs = {s["source_id"]: s for s in reg["sources"] if s["source_id"] in acq["selected_sources"]}
+    tid, surface, model, purpose = inp["target_id"], inp["target_surface"], inp["model_id"], inp["purpose"]
+    return [r for r in reg["rules"]
+            if r["review_status"] == "reviewed" and r["source_id"] in srcs and purpose in r["purposes"]
+            and tid in r["target_ids"] and tid in srcs[r["source_id"]]["target_ids"]
+            and in_list(r["surfaces"], surface) and in_list(srcs[r["source_id"]]["surfaces"], surface) and in_list(r["models"], model)]
+
+
+def _review_summary(rules):
+    """Who reviewed these rules: how many, how many by a person (reviewer_id 'human:...'), and the reviewer_ids with counts."""
+    rules, reviewers = list(rules), {}
+    for r in rules:
+        reviewers[r["reviewer_id"]] = reviewers.get(r["reviewer_id"], 0) + 1
+    return {"rules": len(rules), "human_reviewed": sum(1 for r in rules if human_reviewed(r)), "reviewers": dict(sorted(reviewers.items()))}
+
+
 def applicable_rules(run):
-    """The reviewed rules a run may choose from: in scope for its input (the checks verify makes) and grounded in a source it fetched.
-    The registry is too large to read whole; preconditions and exclusions are left to the one who picks."""
+    """The reviewed rules a run may choose from. The registry is too large to read whole; preconditions and exclusions
+    are left to the one who picks. Each rule says who reviewed it, so a result built on them can say so."""
     run = Path(run)
     reg, reg_sha = load_registry()
     inp, acq = load_json(_read_run(run, "input.json")), load_json(_read_run(run, "acquisition.json"))
@@ -804,15 +875,13 @@ def applicable_rules(run):
     validate_acquisition(acq)
     if acq["registry_sha256"] != reg_sha:
         raise ContractError("registry.json changed since this run was fetched")
-    srcs = {s["source_id"]: s for s in reg["sources"] if s["source_id"] in acq["selected_sources"]}
-    tid, surface, model, purpose = inp["target_id"], inp["target_surface"], inp["model_id"], inp["purpose"]
-    fields = ("rule_id", "source_id", "kind", "purposes", "source_excerpt", "meaning", "allowed_change", "preconditions", "exclusions")
-    rules = [{k: r[k] for k in fields} for r in reg["rules"]
-             if r["review_status"] == "reviewed" and r["source_id"] in srcs and purpose in r["purposes"]
-             and tid in r["target_ids"] and tid in srcs[r["source_id"]]["target_ids"]
-             and in_list(r["surfaces"], surface) and in_list(srcs[r["source_id"]]["surfaces"], surface) and in_list(r["models"], model)]
-    return {"schema_version": 1, "run_id": acq["run_id"], "target_id": tid, "target_surface": surface, "model_id": model,
-            "purpose": purpose, "selected_sources": acq["selected_sources"], "rules": rules}
+    fields = ("rule_id", "source_id", "kind", "purposes", "surfaces", "models", "source_excerpt", "meaning", "allowed_change",
+              "preconditions", "exclusions", "reviewer_id")
+    chosen = _applicable(reg, inp, acq)
+    rules = [{**{k: r[k] for k in fields}, "human_reviewed": human_reviewed(r)} for r in chosen]
+    return {"schema_version": 1, "run_id": acq["run_id"], "target_id": inp["target_id"], "target_surface": inp["target_surface"],
+            "model_id": inp["model_id"], "purpose": inp["purpose"], "selected_sources": acq["selected_sources"], "rules": rules,
+            "review": _review_summary(chosen)}
 
 
 def rubric_version():
@@ -1135,22 +1204,33 @@ def _union(ranges):
     return out
 
 
-def parse_transcript(path):
-    """claude-code-transcript-jsonl-v1: tool_use / tool_result blocks of non-sidechain entries."""
-    events = []
+def read_transcript(path):
+    """-> (rows, own): a Claude Code transcript as (line index, record) and whether it is one subagent's own record.
+    A subagent's transcript has every message marked sidechain, all under one agentId: it is that agent's whole record."""
     try:
         lines = Path(path).read_text(encoding="utf-8").splitlines()
     except (FileNotFoundError, UnicodeDecodeError) as e:
         raise Unreadable(f"host log unreadable: {e}")
+    rows = []
     for seq, line in enumerate(lines):
         if not line.strip():
             continue
         try:
-            d = json.loads(line)
+            rows.append((seq, json.loads(line)))
         except ValueError:
             raise ContractError(f"host log line {seq + 1}: invalid JSON")
+    carriers = [d for _, d in rows if isinstance(d, dict) and isinstance(d.get("message"), dict)]
+    agents = {d.get("agentId") for d in carriers}
+    return rows, bool(carriers) and all(d.get("isSidechain") for d in carriers) and len(agents) == 1 and None not in agents
+
+
+def parse_transcript(path):
+    """claude-code-transcript-jsonl-v1: tool_use / tool_result blocks of the main thread (or, for a subagent's own file, of that agent)."""
+    events = []
+    rows, own = read_transcript(path)
+    for seq, d in rows:
         msg = d.get("message") if isinstance(d, dict) else None
-        if d.get("isSidechain") or not isinstance(msg, dict) or not isinstance(msg.get("content"), list):
+        if not isinstance(msg, dict) or not isinstance(msg.get("content"), list) or (d.get("isSidechain") and not own):
             continue
         for b in msg["content"]:
             if not isinstance(b, dict):
@@ -1257,6 +1337,318 @@ def _finish(run, R, mode, ctx, sources_out, now):
            "change_counts": ctx.get("counts"), "host_log_sha256": ctx.get("host_log_sha256")}
     write_json(run / "verification.json", rep)
     return rep
+
+
+# ---------------------------------------------------------------- sources
+def sources_plan(reg, reg_sha, inp, all_models=False):
+    """Which sources an input is read against, and why each other source of the target is left out. Needs no run and no network."""
+    exp = explain_sources(reg, inp)
+    state = {x["source_id"]: x for x in exp["selected"] + exp["skipped"]}
+    limited = [s for s in reg["sources"] if s["models"] != ["all"] and inp["target_id"] in s["target_ids"]]
+    guides = []
+    for s in limited:
+        x = state.get(s["source_id"])
+        if x is None:
+            g = {"status": "not_routed"}
+        elif "reason" in x:
+            g = {"status": "skipped", **{k: v for k, v in x.items() if k not in ("source_id", "models")}}
+        else:
+            g = {"status": "selected"}
+        guides.append({"source_id": s["source_id"], "models": s["models"], **g})
+    out = {"schema_version": 1, "mode": "plan", "registry_sha256": reg_sha,
+           "input": {k: inp[k] for k in ("target_id", "target_surface", "model_id", "purpose")},
+           "selected": exp["selected"], "skipped": exp["skipped"],
+           "model": {"model_id": inp["model_id"], "model_specific_sources": len(limited), "guides": guides,
+                     "spelling_hint": model_hint(reg, inp["model_id"]) if limited else []}}
+    if all_models:
+        base = select_sources(reg, {**inp, "model_id": "unknown"})
+        out["models"] = {"base": base, "added": {m: [i for i in select_sources(reg, {**inp, "model_id": m}) if i not in base]
+                                                  for m in sorted({m for s in limited for m in s["models"]})}}
+    return out
+
+
+def _body_integrity(run, e):
+    if e["status"] not in ("live", "cache"):
+        return "unavailable"
+    try:
+        data = safe_join(run, e["body_path"]).read_bytes()
+    except (ContractError, FileNotFoundError, TypeError):
+        return "missing"
+    return "ok" if sha_bytes(data) == e["body_sha256"] else "mismatch"
+
+
+def _ranges(nums):
+    out = []
+    for n in sorted(nums):
+        if out and n == out[-1][1] + 1:
+            out[-1][1] = n
+        else:
+            out.append([n, n])
+    return ", ".join(str(a) if a == b else f"{a}-{b}" for a, b in out)
+
+
+def _source_reads(run, host, host_log, rows, rec, problem):
+    """Fill row["read"] from a Claude Code transcript the operator supplied, with the adapter and the rule verify uses.
+    -> SHA-256 of the log, or None when no log was read."""
+    for row in rows:
+        row["read"] = {"status": "unavailable", "reason": None}
+    if host not in LOG_ADAPTER_HOSTS:  # a log from another product is never parsed or guessed at
+        for row in rows:
+            row["read"]["reason"] = "no_log_adapter_for_host"
+        return None
+    if host_log is None:
+        for row in rows:
+            row["read"]["reason"] = "no_host_log"
+        return None
+    hl = Path(host_log)
+    if not hl.is_file():
+        raise Unreadable(f"host log not found: {hl}")
+    log_sha = sha_file(hl)
+    if hl.resolve().is_relative_to(run.resolve()):
+        problem("fail", "host_log_inside_run", "host log inside the run directory is self-authored, not observed")
+        for row in rows:
+            row["read"] = {"status": "self_reported", "reason": "host_log_inside_run"}
+        return log_sha
+    try:
+        events = parse_transcript(hl)
+    except ContractError as e:
+        problem("fail", "host_log_invalid", str(e))
+        for row in rows:
+            row["read"]["reason"] = "host_log_invalid"
+        return log_sha
+    gen_paths = [run / "optimized.md", run / "recommendations.json"]
+    for row in rows:
+        sid = row["source_id"]
+        if row["integrity"] != "ok":
+            row["read"]["reason"] = "body_not_verified"
+            continue
+        body = run / "snapshots" / sid / "body.txt"
+        seen, gen_seq = observed_read_lines(events, body, gen_paths)
+        need = set()
+        for c in (rec["changes"] if rec else []):
+            if c["source_id"] == sid and c["source_start_line"] is not None:
+                need |= set(range(c["source_start_line"], c["source_end_line"] + 1))
+        covered = (not (need - seen)) if need else None
+        row["read"] = {"status": "unavailable", "reason": "generation_write_not_found", "lines_seen": len(seen),
+                       "lines_total": len(body.read_text(encoding="utf-8").split("\n")) - 1, "ranges": _ranges(seen),
+                       "cited_lines_covered": covered}
+        if gen_seq is None:
+            problem("incomplete", "generation_write_not_found", "no write of optimized.md/recommendations.json in the log", source_id=sid)
+            continue
+        ok = covered if need else bool(seen)
+        row["read"].update(status="observed" if ok else "not_observed", reason=None)
+        if not ok:
+            problem("incomplete", "read_not_observed",
+                    "no successful pre-generation Read showing the cited lines" if need else "no successful pre-generation Read of this body",
+                    source_id=sid)
+    return log_sha
+
+
+def sources_report(run, host_log=None):
+    """What a run was read against: the sources chosen for its model, purpose and surface, what was fetched and whether the
+    bodies still match, which rules the changes cite and who reviewed them, and (with a log) which lines were actually read.
+    Everything is recomputed from the run's files and the registry; nothing the agent wrote is taken on trust."""
+    run = Path(run)
+    if not run.is_dir():
+        raise Unreadable(f"run directory not found: {run}")
+    reg, reg_sha = load_registry()
+    inp_bytes = _read_run(run, "input.json").read_bytes()
+    inp = load_json(run / "input.json")
+    validate_input(inp)
+    acq = load_json(_read_run(run, "acquisition.json"))
+    validate_acquisition(acq)
+    rec = None
+    if (run / "recommendations.json").is_file():
+        rec = load_json(run / "recommendations.json")
+        validate_recommendations(rec)
+    problems = []
+
+    def problem(severity, code, message, **ids):
+        problems.append({"severity": severity, "code": code, "message": message, **ids})
+
+    if sha_bytes(inp_bytes) != acq["input_sha256"]:
+        problem("fail", "input_hash_mismatch", "input.json differs from the input this run was fetched with")
+    plan, same = sources_plan(reg, reg_sha, inp), acq["registry_sha256"] == reg_sha
+    expected = [x["source_id"] for x in plan["selected"]]
+    if not same:
+        problem("incomplete", "registry_changed", "registry.json changed since this run was fetched: the routing shown is today's, and rules cannot be matched")
+    elif expected != acq["selected_sources"]:
+        problem("fail", "selected_sources_mismatch", f"registry routing expects {expected}, acquisition has {acq['selected_sources']}")
+    via = {x["source_id"]: x for x in plan["selected"]}
+    srcmap, entries = {s["source_id"]: s for s in reg["sources"]}, {e["source_id"]: e for e in acq["sources"]}
+    applicable = _applicable(reg, inp, acq) if same else None
+    changes = [c for c in (rec["changes"] if rec else []) if c["rule_id"] is not None]
+    rows = []
+    for sid in acq["selected_sources"]:
+        e, src, route = entries[sid], srcmap.get(sid), via.get(sid, {})
+        if src is None:
+            problem("fail", "unknown_source", "source is not in the registry", source_id=sid)
+        row = {"source_id": sid, "models": src["models"] if src else None, "route": route.get("route"),
+               "purposes": route.get("purposes"), "surfaces": route.get("surfaces"),
+               "url": e["final_url"] or e["requested_url"], "status": e["status"], "http_status": e["http_status"],
+               "fetched_at": e["fetched_at"], "error": e["error"], "body_sha256": e["body_sha256"],
+               "integrity": _body_integrity(run, e),
+               "rules": {"applicable": None if applicable is None else sum(1 for r in applicable if r["source_id"] == sid),
+                         "cited": sorted({c["rule_id"] for c in changes if c["source_id"] == sid})}}
+        rows.append(row)
+        if e["status"] not in ("live", "cache"):
+            problem("incomplete", f"source_{e['status']}", e["error"] or e["status"], source_id=sid)
+        elif row["integrity"] != "ok":
+            problem("fail", f"body_{row['integrity']}", "body.txt is missing" if row["integrity"] == "missing"
+                    else "body.txt differs from the recorded SHA-256", source_id=sid)
+    rules_by_id, in_scope = {r["rule_id"]: r for r in reg["rules"]}, None if applicable is None else {r["rule_id"] for r in applicable}
+    citations = []
+    for c in changes:
+        r = rules_by_id.get(c["rule_id"])
+        item = {"change_id": c["change_id"], "kind": c["kind"], "rule_id": c["rule_id"], "source_id": c["source_id"],
+                "lines": [c["source_start_line"], c["source_end_line"]], "reviewer_id": r["reviewer_id"] if r else None,
+                "human_reviewed": bool(r and human_reviewed(r)), "in_scope": None if in_scope is None else c["rule_id"] in in_scope}
+        citations.append(item)
+        ids = {"change_id": c["change_id"], "source_id": c["source_id"]}
+        if c["source_id"] not in acq["selected_sources"]:
+            problem("fail", "cited_source_not_selected", "the cited source is not one this run fetched", **ids)
+        if r is None:
+            problem("fail", "unknown_rule", f"rule {c['rule_id']} is not in the registry", **ids)
+        elif item["in_scope"] is False:
+            problem("fail", "cited_rule_out_of_scope", f"rule {c['rule_id']} is unreviewed or does not apply to this target, purpose, surface and model", **ids)
+    log_sha = _source_reads(run, inp["execution_host"], host_log, rows, rec, problem)
+    levels = {p["severity"] for p in problems}
+    return {"schema_version": 1, "mode": "run", "run_id": acq["run_id"],
+            "verdict": "INCONSISTENT" if "fail" in levels else ("INCOMPLETE" if "incomplete" in levels else "CONSISTENT"),
+            "input": {k: inp[k] for k in ("execution_host", "target_id", "target_surface", "model_id", "purpose")},
+            "registry": {"sha256": reg_sha, "run_sha256": acq["registry_sha256"], "matches": same},
+            "fetch": {"mode": acq["mode"], "started_at": acq["started_at"]},
+            "model": plan["model"], "selected": rows, "skipped": plan["skipped"], "citations": citations,
+            "review": _review_summary(rules_by_id[i] for i in sorted({c["rule_id"] for c in changes}) if i in rules_by_id),
+            "problems": problems, "host_log_sha256": log_sha}
+
+
+def do_sources(run=None, input_path=None, target=None, surface="unknown", model="unknown", purpose="one-shot",
+               all_models=False, host_log=None):
+    if run is not None:
+        if all_models or input_path or target:
+            raise ContractError("--run cannot be combined with --input, --target or --all-models")
+        return sources_report(run, host_log)
+    if host_log:
+        raise ContractError("--host-log needs --run")
+    reg, reg_sha = load_registry()
+    if input_path:
+        if target:
+            raise ContractError("give --input or --target, not both")
+        inp = load_json(Path(input_path))
+        validate_input(inp)
+    elif target:
+        inp = {"target_id": target, "target_surface": surface, "model_id": model, "purpose": purpose}
+        if target not in TARGET_IDS + ("unresolved",) or purpose not in PURPOSES or not surface or not model:
+            raise ContractError(f"--target must be one of {TARGET_IDS}, --purpose one of {PURPOSES}, and --surface/--model not empty")
+    else:
+        raise ContractError("give --run, --input or --target")
+    return sources_plan(reg, reg_sha, inp, all_models)
+
+
+def _ids(xs):
+    return "、".join(f"`{x}`" for x in xs) or "なし"
+
+
+def _cond(xs):
+    return "・".join("すべて" if x == "all" else f"`{x}`" for x in xs)
+
+
+def _why_left_out(x, inp):
+    if x["reason"] == "model_mismatch":
+        return f"モデルが違います(入力: `{inp['model_id']}`)"
+    if x["reason"] == "model_unknown":
+        return "`model_id` が `unknown` です(指定すると選ばれます)"
+    need, given = [], []
+    if not x["purpose_ok"]:
+        need.append("purpose が " + _cond(x["purposes"]))
+        given.append(f"purpose=`{inp['purpose']}`")
+    if not x["surface_ok"]:
+        need.append("target_surface が " + _cond(x["surfaces"]))
+        given.append(f"target_surface=`{inp['target_surface']}`")
+    return " かつ ".join(need) + " のときだけ選ばれます(入力: " + "、".join(given) + ")"
+
+
+def _model_lines(rep):
+    m, inp = rep["model"], rep["input"]
+    if m["model_specific_sources"] == 0:
+        return [f"- この利用先(`{inp['target_id']}`)には、モデル別の資料がありません。`model_id` を変えても、選ばれる資料は変わりません。"]
+    chosen = [g["source_id"] for g in m["guides"] if g["status"] == "selected"]
+    out = [f"- この利用先には、モデル別の資料が {m['model_specific_sources']} 件あります。`model_id`=`{inp['model_id']}` で、"
+           + (f"選ばれたのは {_ids(chosen)} です。" if chosen else "選ばれたものはありません。")]
+    if m["spelling_hint"]:
+        out.append(f"- `model_id` の綴りが違うかもしれません。登録されている ID: {_ids(m['spelling_hint'])}。選択には完全に一致する ID が要ります(この表示は選択に使っていません)。")
+    rest = [g for g in m["guides"] if g["status"] != "selected"]
+    if rest:
+        out += ["", "| 選ばれなかったモデル別の資料 | 対象モデル | 理由 |", "|---|---|---|"]
+        out += [f"| `{g['source_id']}` | {_ids(g['models'])} | "
+                + ("この利用先の経路に入っていません" if g["status"] == "not_routed" else _why_left_out(g, inp)) + " |" for g in rest]
+    return out
+
+
+def _read_text(r):
+    if r["status"] == "observed":
+        return f"観測(読んだ行 {r['ranges']} / 全 {r['lines_total']} 行)"
+    if r["status"] == "not_observed":
+        return f"観測できず(読んだ行: {r['ranges'] or 'なし'})"
+    if r["status"] == "self_reported":
+        return "無効(ログが run の中にある)"
+    return {"no_host_log": "未観測(ホストのログなし)", "no_log_adapter_for_host": "未観測(このホストは対象外)",
+            "host_log_invalid": "未観測(ログを読めない)", "generation_write_not_found": "未観測(生成の書込みがログにない)",
+            "body_not_verified": "未観測(本文を確認できない)"}.get(r["reason"], "未観測")
+
+
+def render_sources(rep):
+    """The report as Markdown, from the report alone: a script writes it, not a model."""
+    inp, plan = rep["input"], rep["mode"] == "plan"
+    order = ("target_id", "target_surface", "model_id", "purpose") + (() if plan else ("execution_host",))
+    out = ["# 見る資料の計画" if plan else f"# 見た資料: {rep['run_id']}", "",
+           "- 入力: " + " / ".join(f"{k}=`{inp[k]}`" for k in order)]
+    if plan:
+        out.append(f"- registry: SHA-256 `{rep['registry_sha256'][:12]}…`。通信せず、registry.json だけから求めました。")
+    else:
+        r = rep["registry"]
+        out += [f"- registry: SHA-256 `{r['sha256'][:12]}…`(" + ("取得時と一致" if r["matches"] else "**取得のあとで変わっています**") + ")",
+                f"- 取得: {rep['fetch']['mode']}(開始 {rep['fetch']['started_at']})", f"- 判定: **{rep['verdict']}**"]
+    out += ["", "## モデルによる選択", ""] + _model_lines(rep) + ["", f"## {'選ばれる' if plan else '選んだ'}資料({len(rep['selected'])} 件)", ""]
+    why = lambda x: "常に取得" if x["route"] == "required" else (f"条件付き(purpose: {_cond(x['purposes'])}、target_surface: {_cond(x['surfaces'])})" if x["route"] else "—")  # noqa: E731
+    if plan:
+        out += ["| 資料 | 選ばれる理由 | 対象モデル |", "|---|---|---|"]
+        out += [f"| `{x['source_id']}` | {why(x)} | {_cond(x['models'])} |" for x in rep["selected"]]
+    else:
+        out += ["| 資料 | 選んだ理由 | 取得 | 本文 SHA-256 | 規則(適用 / 引用) | 読取り |", "|---|---|---|---|---|---|"]
+        mark = {"ok": "一致", "mismatch": "**不一致**", "missing": "**ファイルなし**", "unavailable": "—"}
+        for x in rep["selected"]:
+            sha = f"`{x['body_sha256'][:12]}…` {mark[x['integrity']]}" if x["body_sha256"] else mark[x["integrity"]]
+            n = "?" if x["rules"]["applicable"] is None else x["rules"]["applicable"]
+            out.append(f"| [`{x['source_id']}`]({x['url']}) | {why(x)} | {x['status']} {x['fetched_at'] or ''} | {sha} | {n} / {len(x['rules']['cited'])} | {_read_text(x['read'])} |")
+    rest = [x for x in rep["skipped"] if x["reason"] == "route_not_matched" and x["models"] == ["all"]]  # the model guides were listed above
+    if rest:
+        out += ["", f"## 選ばなかった資料(モデル別の資料を除く。経路に合わないもの、{len(rest)} 件)", ""]
+        out += [f"- `{x['source_id']}`: {_why_left_out(x, inp)}" for x in rest]
+    if plan and "models" in rep:
+        out += ["", "## モデルごとの違い", "", f"`model_id` が `unknown` のときの資料: {_ids(rep['models']['base'])}", ""]
+        if rep["models"]["added"]:
+            out += ["| `model_id` | 追加で選ばれる資料 |", "|---|---|"]
+            out += [f"| `{m}` | {_ids(a) if a else 'なし(この `target_surface` ではモデル別の資料が選ばれません)'} |" for m, a in rep["models"]["added"].items()]
+    if not plan:
+        out += ["", "## 引用した規則と審査者", ""]
+        if rep["citations"]:
+            out += ["| 変更 | 規則 | 資料 | 行 | 審査者 | 人の審査 | 範囲内 |", "|---|---|---|---|---|---|---|"]
+            out += [f"| {c['change_id']} | `{c['rule_id']}` | `{c['source_id']}` | {c['lines'][0]}-{c['lines'][1]} | {c['reviewer_id']} | "
+                    f"{'あり' if c['human_reviewed'] else 'なし'} | {'?' if c['in_scope'] is None else ('はい' if c['in_scope'] else '**いいえ**')} |" for c in rep["citations"]]
+            rv = rep["review"]
+            out += ["", f"引用した規則 {rv['rules']} 件のうち、人が審査したものは {rv['human_reviewed']} 件です。"]
+        else:
+            out.append("規則を引用した変更はありません。")
+        out += ["", "## 確認結果", ""]
+        out += [f"- {p['severity']} `{p['code']}`: {p['message']}" + (f"(`{p['source_id']}`)" if p.get("source_id") else "") for p in rep["problems"]] \
+            or ["- 資料の選択は registry の規則から再現でき、本文のハッシュも取得時の記録と一致しました。"]
+        if any(x["read"]["reason"] == "no_host_log" for x in rep["selected"]):
+            out.append("- 読取りは観測していません。Claude Code のログのパスを `--host-log` に渡すと、どの行を読んだかを確かめられます。")
+    out += ["", "これは、registry の規則から求めた計画です。実際に取得して読んだかは、run の報告(`--run`)で確かめます。" if plan else
+            "これは、取得した資料と記録の整合を見る報告です。規則の解釈が正しいことや、資料の内容を理解したことは確かめません。"]
+    return "\n".join(out) + "\n"
 
 
 # ---------------------------------------------------------------- assess
@@ -1801,6 +2193,16 @@ def main(argv=None):
     d.add_argument("--source", action="append", default=[])
     r = sub.add_parser("rules")
     r.add_argument("--run", required=True)
+    s = sub.add_parser("sources")
+    s.add_argument("--run")
+    s.add_argument("--host-log")
+    s.add_argument("--input")
+    s.add_argument("--target")
+    s.add_argument("--surface", default="unknown")
+    s.add_argument("--model", default="unknown")
+    s.add_argument("--purpose", default="one-shot")
+    s.add_argument("--all-models", action="store_true")
+    s.add_argument("--markdown", action="store_true")
     args = ap.parse_args(argv)
     for stream in (sys.stdout, sys.stderr):  # Windows consoles default to a legacy code page; the JSON holds Japanese text
         if hasattr(stream, "reconfigure"):
@@ -1825,7 +2227,17 @@ def main(argv=None):
             return _emit("drift", 0 if rep["verdict"] == "CURRENT" else 2, rep, f"{rep['verdict']} {stale}")
         if args.cmd == "rules":
             out = applicable_rules(args.run)
-            return _emit("rules", 0, out, f"{len(out['rules'])} rules")
+            return _emit("rules", 0, out, f"{len(out['rules'])} rules, {out['review']['human_reviewed']} reviewed by a person")
+        if args.cmd == "sources":
+            rep = do_sources(args.run, args.input, args.target, args.surface, args.model, args.purpose, args.all_models, args.host_log)
+            code = {"CONSISTENT": 0, "INCONSISTENT": 1}.get(rep.get("verdict"), 0 if rep["mode"] == "plan" else 2)
+            note = (f"{len(rep['selected'])} selected, {len(rep['skipped'])} left out" if rep["mode"] == "plan"
+                    else f"{rep['verdict']} {sorted({p['code'] for p in rep['problems']})}")
+            if not args.markdown:
+                return _emit("sources", code, rep, note)
+            print(render_sources(rep), end="")
+            print(f"sources: {note} (exit {code})", file=sys.stderr)
+            return code
         code, ev = compare(args.run, args.plan, args.results, args.cases)
         return _emit("compare", code, ev, f"{ev['status']} {ev['contract_violations'][:3] or ev['incomplete_reasons'][:3]}")
     except ContractError as e:

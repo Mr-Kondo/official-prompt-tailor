@@ -53,9 +53,41 @@ verification.json  semantic-review.json  semantic-verification.json  evaluation.
 
 条件(`verify` が適用範囲として確かめるものと同じ): `review_status` が `reviewed`、`input.json` の `target_id` と `purpose` が規則と資料に合う、`target_surface` と `model_id` が規則の `surfaces` / `models`(資料の `surfaces`)に合う(`unknown` は `all` にだけ合う)、規則の資料が `acquisition.json` の `selected_sources` にある。`preconditions` と `exclusions` は判定しない。
 
-出力 JSON: `run_id`、`target_id`、`target_surface`、`model_id`、`purpose`、`selected_sources`、`rules`(`rule_id` `source_id` `kind` `purposes` `source_excerpt` `meaning` `allowed_change` `preconditions` `exclusions`)。終了コードは 0。registry が取得のあとで変わっていれば契約違反(1)、run のファイルがなければ実行不能(2)。`drift` の `changed` / `excerpt_missing` は反映しないので、先に `drift --run` を実行する。
+出力 JSON: `run_id`、`target_id`、`target_surface`、`model_id`、`purpose`、`selected_sources`、`rules`(`rule_id` `source_id` `kind` `purposes` `surfaces` `models` `source_excerpt` `meaning` `allowed_change` `preconditions` `exclusions` `reviewer_id` `human_reviewed`)、`review`(`rules` の件数、`human_reviewed` の件数、`reviewer_id` ごとの件数 `reviewers`)。終了コードは 0。
+
+審査者: `reviewer_id` が `human:` で始まり、そのあとに名前か役割がある規則だけが、人の審査(`human_reviewed=true`)。agent の審査(`claude-code/… (agent review …; not human)` など)を含め、それ以外は人として数えない。registry は、`human:` のあとが空の `reviewer_id` を契約違反にする。registry が取得のあとで変わっていれば契約違反(1)、run のファイルがなければ実行不能(2)。`drift` の `changed` / `excerpt_missing` は反映しないので、先に `drift --run` を実行する。
 
 HTML の本文から、相対時刻の行(`Updated today`、`Updated 3 days ago` など)を除く。毎日変わってハッシュを動かすため。絶対日付(`Last updated: …`)は残す。
+
+## sources
+
+`sources` は、どの資料を、なぜ見たか(見るか)を、スクリプトだけで出す。モデルが書いたものは信用せず、run のファイルと registry から求め直す(通信しない)。
+
+```text
+sources --target T [--surface S] [--model M] [--purpose P] [--all-models]   # 計画: run なし
+sources --input input.json [--all-models]                                   # 計画: input.json から
+sources --run RUN [--host-log LOG]                                          # run の報告
+```
+
+既定は JSON(標準出力)。`--markdown` は、同じ内容を Markdown にする(スクリプトが組み立てる)。`--run` は、他の指定と一緒には使えない。`--host-log` は `--run` と一緒に使う(契約違反は 1)。
+
+計画(`mode: plan`):
+- `input`、`registry_sha256`、`selected`(`source_id` `models` `route` = `required` / `conditional`、条件付きなら `purposes` `surfaces`)、`skipped`(選ばれなかった資料と `reason`)、`model`、`--all-models` のときの `models`。
+- `reason`: `route_not_matched`(`purpose` か `target_surface` が合わない。`purpose_ok` `surface_ok` がどちらが合わないかを示す)/ `model_mismatch`(モデル限定の資料で、`model_id` がそのモデルでない)/ `model_unknown`(モデル限定の資料で、`model_id` が `unknown`)。
+- `model`: `model_specific_sources`(その利用先にあるモデル限定の資料の数。0 なら `model_id` で選択は変わらない)、`guides`(その資料ごとの `status` = `selected` / `skipped` / `not_routed`)、`spelling_hint`(綴りだけが違う、登録済みの `model_id`。選択には使わない)。
+- `models`: `base`(`model_id` が `unknown` のときの資料)と、`added`(`model_id` ごとに加わる資料)。
+
+報告(`mode: run`)は、計画の `model` `skipped` に加えて、次を出す。`input` に `execution_host` が加わる。
+- `selected`: `acquisition.json` の `selected_sources` ごとに、`source_id` `models` `route` `url` `status` `fetched_at` `body_sha256`、`integrity`(`ok` / `mismatch` / `missing` / `unavailable`。`body.txt` のハッシュを記録と比べる)、`rules`(`applicable` = その run で選べる規則の数、`cited` = 変更が引用した規則)、`read`。
+- `read`: `status`(`observed` / `not_observed` / `self_reported` / `unavailable`)、`reason`、`lines_seen` `lines_total` `ranges`(読んだ行)、`cited_lines_covered`。`--host-log` の Claude Code のログから、`verify` と同じ規則(成功した `Read` が、生成物の最初の書込みより前に、その行を示した)で求める。ログがなければ `no_host_log`、`execution_host` が `claude-code` でなければ `no_log_adapter_for_host` で、`unavailable`。
+- `citations`: 変更ごとの `rule_id` `source_id` `lines` `reviewer_id` `human_reviewed` `in_scope`(その run で選べる規則か)。`review`: 引用した規則の審査者の集計(`rules` の `review` と同じ形)。
+- `problems`(`severity` = `fail` / `incomplete`、`code`、`message`)と `verdict`。
+
+`code`: `fail` は `input_hash_mismatch` `selected_sources_mismatch` `unknown_source` `body_mismatch` `body_missing` `cited_source_not_selected` `unknown_rule` `cited_rule_out_of_scope` `host_log_inside_run` `host_log_invalid`。`incomplete` は `registry_changed` `source_blocked` / `source_missing` / `source_stale` `read_not_observed` `generation_write_not_found`。ログを渡さないだけでは、問題にしない。
+
+`verdict`: `CONSISTENT`(0)/ `INCONSISTENT`(1。`fail` が 1 件でもある)/ `INCOMPLETE`(2)。計画は 0。引数や run の構造の契約違反は 1、run やログが見つからないときは 2。
+
+確かめるのは、記録と registry の整合です。規則の解釈が正しいこと、資料を理解したこと、効果は確かめません。読取りを観測できるのは、ログを渡した Claude Code だけです。
 
 ## recommendations.json の change
 

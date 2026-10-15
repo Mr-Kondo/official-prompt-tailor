@@ -10,6 +10,7 @@ python3 .claude/skills/official-prompt-tailor/scripts/evidence.py drift --run ou
 python3 .claude/skills/official-prompt-tailor/scripts/evidence.py rules --run outputs/official-prompt-tailor/run-001   # この run で選べる規則だけを出す(registry.json は読まない)
 # 取得した snapshots/<id>/body.txt を Claude Code で読み、optimized.md と recommendations.json を書く
 python3 .claude/skills/official-prompt-tailor/scripts/evidence.py verify --run outputs/official-prompt-tailor/run-001 --mode live --host-log <ユーザーが指定した実行ログ>
+python3 .claude/skills/official-prompt-tailor/scripts/evidence.py sources --run outputs/official-prompt-tailor/run-001 --markdown --host-log <ユーザーが指定した実行ログ>   # どの資料を、なぜ、どこまで読んだか
 ```
 
 `input.json` の項目は、次のとおりです。
@@ -33,7 +34,26 @@ python3 .claude/skills/official-prompt-tailor/scripts/evidence.py verify --run o
 
 cache の run を `--mode live` で検証すると `INCOMPLETE` です(live として扱いません)。
 
-## 3. INCOMPLETE の例
+## 3. どの資料を見たかを確かめる
+
+`sources` は、どの資料を、なぜ、モデルに応じてどう選んだかを、スクリプトだけで出します。モデルの自己申告は使いません。実行の前と後で、使い方が違います。
+
+```bash
+# 実行の前: この入力なら、どの資料を見るか(通信しません。run も要りません)
+python3 .claude/skills/official-prompt-tailor/scripts/evidence.py sources --target claude --surface api --model claude-opus-5-5 --purpose agent-instruction --markdown
+# モデルごとの違い: 共通の資料と、モデルごとに加わる資料
+python3 .claude/skills/official-prompt-tailor/scripts/evidence.py sources --target claude --surface api --all-models --markdown
+# 実行の後: 取得した資料、本文のハッシュ、引用した規則と審査者、読んだ行
+python3 .claude/skills/official-prompt-tailor/scripts/evidence.py sources --run outputs/official-prompt-tailor/run-001 --host-log <Claude Code のトランスクリプトのパス> --markdown
+```
+
+- モデル別の資料(モデル別ガイド)があるのは、Claude のモデルだけです。ほかの利用先では、`model_id` を変えても、選ばれる資料は変わりません。報告の「モデルによる選択」に、そう書かれます。
+- Claude のモデル別ガイドは、`target_surface` が `api` で、`model_id` が完全に一致するときだけ選ばれます。`model_id` の綴りが違うときは(`claude-opus-5-5-20261001` など)、登録済みの ID を示しますが、選択には使いません。
+- `--host-log` を渡すと、`verify` と同じ規則で、取得した本文をどの行まで読んだかを確かめます。ログを渡さないと、読取りは「未観測」になります。ログのパスは、あなたが指定します。スキルは探しません。
+- 別のエージェント(サブエージェント)に実行させたときは、そのエージェント自身の記録(`~/.claude/projects/<プロジェクト>/<セッション>/subagents/agent-<id>.jsonl`)を渡します。メインのセッションの記録には、サブエージェントが読んだ行は入りません。`verify --host-log` にも同じ記録を渡せます。全メッセージが 1 つの `agentId` のものである記録は、そのエージェントの記録として全体を読みます。
+- 判定は、`CONSISTENT`(0)、`INCONSISTENT`(1)、`INCOMPLETE`(2)です。本文のハッシュが記録と違う、選択が registry の規則と違う、範囲外の規則を引用している、などが `INCONSISTENT` です。
+
+## 4. INCOMPLETE の例
 
 実行ログを渡さない場合、読取りを観測できません。他がすべて合格でも、総合は `INCOMPLETE` です。2026-10-14 に実際に取得した run-001 と run-002 で確認した出力は、次のとおりです。
 

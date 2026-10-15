@@ -11,7 +11,7 @@
   SKILL.md                       入口・手順・表示規則
   references/registry.json       資料(50)・対象(11)・審査済み規則(104)
   references/evidence-contract.md / review-rubric.md
-  scripts/evidence.py            fetch / verify / assess / compare / drift / rules(標準ライブラリのみ)
+  scripts/evidence.py            fetch / verify / assess / compare / drift / rules / sources(標準ライブラリのみ)
 tools/maintain.py                保守用(スキルには同梱しない): discover / propose
 .github/workflows/               test(Python 3.9〜3.14)・watch(週次の drift と discover)・release
 tests/   evals/prompt-tailor-cases.jsonl   outputs/(Git 管理外)
@@ -82,6 +82,8 @@ python3 install.py --uninstall --project <プロジェクト>            # 削�
 `fetch` の終了コードは、0 が「必須資料の取得・本文検査に成功」、1 が「契約違反」、2 が「blocked / missing / stale / target 未解決」です。**`fetch` の 0 は、検証済みではありません。** 引数の誤りは、argparse の 2 です。
 
 `drift` は、この 3 つとは別の、資料の更新確認です。規則の審査後に資料の本文が変わったかを、ハッシュと引用の有無で調べます。終了コードは、`CURRENT` → 0、`DRIFT` / `INCOMPLETE` → 2、契約違反 → 1 です。
+
+`sources` も別物で、どの資料を、なぜ(利用先・`purpose`・`target_surface`・`model_id` に応じてどう選んで)見たかを、スクリプトだけで出します。実行の前は `--target` などで計画を、実行の後は `--run` で、取得した本文のハッシュ・引用した規則とその審査者・(ログを渡せば)読んだ行を確かめます。終了コードは、`CONSISTENT` → 0、`INCONSISTENT` → 1、`INCOMPLETE` → 2 です(計画は 0)。使い方は [docs/usage.md](docs/usage.md) にあります。
 
 推奨を採用するには、「参照検証 PASS」と「意味審査 PASS」の両方が必要です。「改善を実測済み」と書けるのは、その対象の `IMPROVED_ON_TEST_SET` があるときだけです。これは、一般的な性能向上や統計的な確証を意味しません。
 

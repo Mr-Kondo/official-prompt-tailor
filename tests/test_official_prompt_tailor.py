@@ -566,6 +566,17 @@ class TestEvidenceBinding(Base):
         self.rewrite_rec(self.run, lambda r: r["changes"][1].update({"before_start": 0, "after_start": 0}))
         self.check("overlapping_changes")
 
+    def test_a_pure_insertion_binds_with_an_anchor_or_an_empty_before_span_but_not_when_left_uncovered(self):
+        # references/recommendations-example.md tells the one who writes recommendations.json how to record text that is only added
+        inserted = "バグを直して。\n公開APIは変更しない。テストはpytestで。\n"  # a line break added after the first sentence
+        anchored = [("c1", "editorial", None, "バグを直して。", "バグを直して。\n", None, None)]
+        self.generate(self.run, changes=anchored, optimized=inserted)  # anchored: the sentence it follows is rewritten with the break
+        self.assertEqual(self.verify(self.run, "live", self.log)["checks"]["change_binding"]["status"], "PASS")
+        self.rewrite_rec(self.run, lambda r: r["changes"][0].update(before_start=7, before_end=7, after_start=7, after_end=8, after_excerpt="\n"))
+        self.assertEqual(self.verify(self.run, "live", self.log)["checks"]["change_binding"]["status"], "PASS")  # empty before span
+        self.rewrite_rec(self.run, lambda r: r["changes"].clear())
+        self.check("unmapped_change")  # the added line break belongs to no change
+
     def test_scope_mismatches(self):
         for name, setup, code in (
                 ("other target", lambda: self.c3(rule_id="rule-codex-only", exact_excerpt="Reference specific files",
@@ -772,6 +783,42 @@ class TestRouting(unittest.TestCase):
                 self.assertEqual(("claude-prompting-opus-5-5" in got, "claude-prompting-sonnet-5-5" in got), (has_opus, has_sonnet))
                 self.assertIn("claude-model-prompting", got)  # a source for all models is kept
         self.assertNotIn("claude-prompting-opus-5-5", self.route("claude", "one-shot", "unknown", "claude-opus-5-5"))  # surface still decides
+
+    def all_inputs(self):
+        models = ["unknown", "other-model"] + sorted({m for s in self.reg["sources"] for m in s["models"] if m != "all"})
+        for target in ev.TARGET_IDS + ("unresolved",):
+            for purpose in ev.PURPOSES:
+                for surface in ("unknown", "api", "gems", "cli"):
+                    for model in models:
+                        yield {"target_id": target, "purpose": purpose, "target_surface": surface, "model_id": model}
+
+    def test_the_explanation_selects_exactly_what_the_routing_selects(self):
+        # explain_sources is what the sources report shows the reader: it must never disagree with what fetch fetches
+        for inp in self.all_inputs():
+            exp = ev.explain_sources(self.reg, inp)
+            chosen, left = [x["source_id"] for x in exp["selected"]], [x["source_id"] for x in exp["skipped"]]
+            self.assertEqual(chosen, ev.select_sources(self.reg, inp), inp)
+            self.assertEqual((len(left), set(chosen) & set(left)), (len(set(left)), set()), inp)
+
+    def test_every_model_guide_is_reachable_and_never_chosen_for_another_model(self):
+        limited = {s["source_id"]: s for s in self.reg["sources"] if s["models"] != ["all"]}
+        self.assertTrue(limited)
+        reached = {(sid, m): False for sid, s in limited.items() for m in s["models"]}
+        for inp in self.all_inputs():
+            for sid in ev.select_sources(self.reg, inp):
+                if sid in limited:
+                    self.assertIn(inp["model_id"], limited[sid]["models"], inp)  # a guide never reaches another model, nor 'unknown'
+                    reached[(sid, inp["model_id"])] = True
+        self.assertEqual([k for k, v in reached.items() if not v], [])  # and each guide is chosen for each of its own models
+
+    def test_a_model_given_with_another_spelling_gets_a_hint_but_no_guide(self):
+        for given, hint in (("claude-opus-5-5-20261001", ["claude-opus-5-5"]), ("Claude Opus 5.5", ["claude-opus-5-5"]),
+                            ("opus_5_5", ["claude-opus-5-5"]), ("claude-opus-5-1", []), ("claude-opus-5-5", []),
+                            ("unknown", []), ("gpt-5", [])):
+            with self.subTest(given):
+                self.assertEqual(ev.model_hint(self.reg, given), hint)
+                if given != "claude-opus-5-5":
+                    self.assertNotIn("claude-prompting-opus-5-5", self.route("claude", "one-shot", "api", given))  # the hint is never used to select
 
     def test_distinct_gemini_products_are_not_merged(self):
         ids = {t: self.route(t) for t in ("gemini-agent-app", "gemini-cli", "google-adk-agent", "gemini", "antigravity")}
@@ -1612,9 +1659,245 @@ class TestRules(Base):
         code, out, err = self.cli("rules", "--run", str(self.run_dir()))
         rep = json.loads(out)
         self.assertEqual((code, rep["selected_sources"], rep["purpose"]), (0, ["doc-a"], "one-shot"))
-        self.assertEqual(set(rep["rules"][0]), {"rule_id", "source_id", "kind", "purposes", "source_excerpt", "meaning",
-                                                "allowed_change", "preconditions", "exclusions"})
+        self.assertEqual(set(rep["rules"][0]), {"rule_id", "source_id", "kind", "purposes", "surfaces", "models", "source_excerpt",
+                                                "meaning", "allowed_change", "preconditions", "exclusions", "reviewer_id", "human_reviewed"})
+        self.assertIn("2 rules, 0 reviewed by a person", err)
         self.assertEqual(self.cli("rules", "--run", str(self.tmp / "no-such-run"))[0], 2)  # not a run directory: not runnable
+
+    def test_each_rule_says_who_reviewed_it_and_only_a_named_person_counts(self):
+        self.fetch()
+        rep = ev.applicable_rules(self.run_dir())
+        self.assertEqual([(r["reviewer_id"], r["human_reviewed"]) for r in rep["rules"]], [("unit-test", False)] * 2)
+        self.assertEqual(rep["review"], {"rules": 2, "human_reviewed": 0, "reviewers": {"unit-test": 2}})
+
+        def by_person(reg):
+            next(r for r in reg["rules"] if r["rule_id"] == "rule-verify")["reviewer_id"] = "human:Taro"
+        self.set_registry(by_person)
+        self.fetch("run-h")
+        rep = ev.applicable_rules(self.run_dir("run-h"))
+        self.assertEqual(rep["review"], {"rules": 2, "human_reviewed": 1, "reviewers": {"human:Taro": 1, "unit-test": 1}})
+        self.assertEqual({r["rule_id"]: r["human_reviewed"] for r in rep["rules"]}, {"rule-verify": True, "rule-inference": False})
+        self.assertIn("1 reviewed by a person", self.cli("rules", "--run", str(self.run_dir("run-h")))[2])
+
+    def test_a_reviewer_id_counts_as_a_person_only_with_the_prefix_and_a_name(self):
+        for reviewer, valid, person in (("human:", False, None), ("human:  ", False, None), ("human:Taro", True, True),
+                                        ("humanoid-review", True, False), ("claude-code/x (agent review; not human)", True, False)):
+            with self.subTest(reviewer):
+                self.set_registry(lambda reg, rid=reviewer: next(r for r in reg["rules"] if r["rule_id"] == "rule-verify").update(reviewer_id=rid))
+                if valid:
+                    reg, _ = ev.load_registry()
+                    self.assertEqual(ev.human_reviewed(next(r for r in reg["rules"] if r["rule_id"] == "rule-verify")), person)
+                else:
+                    with self.assertRaises(ev.ContractError):
+                        ev.load_registry()
+
+
+class TestSourcesPlan(unittest.TestCase):
+    """The plan answers, before any run: which sources would this model, purpose and surface be read against, and why not the others."""
+    @classmethod
+    def setUpClass(cls):
+        cls.reg, cls.sha = ev.load_registry(SKILL / "references" / "registry.json")
+
+    def plan(self, target="claude", surface="api", model="claude-opus-5-5", purpose="agent-instruction", **kw):
+        return ev.sources_plan(self.reg, self.sha, {"target_id": target, "target_surface": surface, "model_id": model, "purpose": purpose}, **kw)
+
+    def test_the_guide_of_the_given_model_is_chosen_and_the_others_are_left_out_for_the_model(self):
+        rep = self.plan()
+        status = {g["source_id"]: g["status"] for g in rep["model"]["guides"]}
+        self.assertEqual(status.pop("claude-prompting-opus-5-5"), "selected")
+        self.assertEqual((set(status.values()), len(status)), ({"skipped"}, 7))
+        self.assertEqual({g["reason"] for g in rep["model"]["guides"] if g["status"] == "skipped"}, {"model_mismatch"})
+        self.assertIn("claude-prompting-opus-5-5", [x["source_id"] for x in rep["selected"]])
+        self.assertIn("claude-model-prompting", [x["source_id"] for x in rep["selected"]])  # a source for every model stays
+        self.assertEqual(rep["model"]["model_specific_sources"], 8)
+
+    def test_without_a_model_or_the_api_surface_no_guide_is_chosen_and_the_reason_says_which(self):
+        no_model = self.plan(model="unknown")
+        self.assertEqual({g["reason"] for g in no_model["model"]["guides"]}, {"model_unknown"})
+        no_surface = self.plan(surface="unknown")
+        self.assertEqual({(g["reason"], g["surface_ok"], g["purpose_ok"]) for g in no_surface["model"]["guides"]},
+                         {("route_not_matched", False, True)})  # the surface, not the model, keeps them out
+        self.assertEqual(self.plan(target="unresolved")["selected"], [])
+
+    def test_a_target_without_model_guides_does_not_depend_on_the_model(self):
+        for target in ("chatgpt", "chatgpt-work", "codex", "gemini", "antigravity", "gemini-cli", "google-adk-agent"):
+            with self.subTest(target):
+                a, b = self.plan(target, "api", "gpt-5"), self.plan(target, "api", "unknown")
+                self.assertEqual((a["model"]["model_specific_sources"], a["model"]["guides"]), (0, []))
+                self.assertEqual(a["selected"], b["selected"])
+
+    def test_all_models_lists_what_each_model_adds_to_the_common_sources(self):
+        limited = {s["source_id"]: s["models"] for s in self.reg["sources"] if s["models"] != ["all"]}
+        rep = self.plan(model="unknown", all_models=True)
+        self.assertEqual(rep["models"]["added"], {m: [sid] for sid, models in limited.items() for m in models})
+        self.assertFalse(set(limited) & set(rep["models"]["base"]))
+        by_ui = self.plan(surface="unknown", all_models=True)["models"]["added"]
+        self.assertEqual({m: a for m, a in by_ui.items() if a}, {})  # off the API surface, no model changes the sources
+
+    def test_markdown_names_the_guide_the_reason_and_the_model(self):
+        text = ev.render_sources(self.plan(model="claude-opus-5-5-20261001", all_models=True))
+        self.assertIn("# 見る資料の計画", text)
+        self.assertIn("綴りが違うかもしれません。登録されている ID: `claude-opus-5-5`", text)
+        self.assertIn("| `claude-prompting-opus-5-5` | `claude-opus-5-5` | モデルが違います(入力: `claude-opus-5-5-20261001`) |", text)
+        self.assertIn("| `claude-opus-5-5` | `claude-prompting-opus-5-5` |", text)
+        text = ev.render_sources(self.plan("codex", "api", "gpt-5"))
+        self.assertIn("モデル別の資料がありません。`model_id` を変えても、選ばれる資料は変わりません", text)
+
+    def test_markdown_says_so_when_no_guide_is_chosen_and_names_each_guide_once(self):
+        text = ev.render_sources(self.plan(surface="unknown", model="unknown"))
+        self.assertIn("`model_id`=`unknown` で、選ばれたものはありません。", text)
+        self.assertEqual(text.count("`claude-prompting-opus-5-5`"), 1)  # in the model section; not again among the sources the route left out
+        self.assertIn("モデル別の資料を除く。経路に合わないもの", text)
+        self.assertIn("で、選ばれたのは `claude-prompting-opus-5-5` です。", ev.render_sources(self.plan()))
+
+
+class TestSourcesRun(Base):
+    """The report on a run is recomputed from the run's files and the registry; what the agent wrote is only checked against them."""
+    def setUp(self):
+        super().setUp()
+        self.run, self.log = self.good_run()
+
+    def report(self, log="default", **kw):
+        return ev.sources_report(self.run, self.log if log == "default" else log, **kw)
+
+    def problem_codes(self, rep):
+        return {p["code"] for p in rep["problems"]}
+
+    def test_a_good_run_is_consistent_and_shows_what_was_read_cited_and_who_reviewed_it(self):
+        rep = self.report()
+        self.assertEqual((rep["verdict"], rep["problems"], rep["registry"]["matches"]), ("CONSISTENT", [], True))
+        (row,) = rep["selected"]
+        self.assertEqual((row["source_id"], row["route"], row["status"], row["integrity"]), ("doc-a", "required", "live", "ok"))
+        self.assertEqual(row["body_sha256"], self.entry(self.run)["body_sha256"])
+        self.assertEqual(row["rules"], {"applicable": 2, "cited": ["rule-verify"]})
+        self.assertEqual((row["read"]["status"], row["read"]["cited_lines_covered"]), ("observed", True))
+        (cite,) = rep["citations"]
+        self.assertEqual((cite["rule_id"], cite["reviewer_id"], cite["human_reviewed"], cite["in_scope"]),
+                         ("rule-verify", "unit-test", False, True))
+        self.assertEqual(rep["review"], {"rules": 1, "human_reviewed": 0, "reviewers": {"unit-test": 1}})
+
+    def test_without_a_log_the_reads_are_unavailable_but_everything_else_is_still_checked(self):
+        rep = self.report(None)
+        self.assertEqual(rep["verdict"], "CONSISTENT")
+        self.assertEqual((rep["selected"][0]["read"]["status"], rep["selected"][0]["read"]["reason"]), ("unavailable", "no_host_log"))
+        run, log = self.good_run("run-codex", execution_host="codex")
+        rep = ev.sources_report(run, log)  # a Claude Code log is offered to a host whose logs are not understood: not parsed
+        self.assertEqual((rep["verdict"], rep["selected"][0]["read"]["reason"]), ("CONSISTENT", "no_log_adapter_for_host"))
+
+    def test_reads_that_do_not_show_the_cited_lines_are_incomplete_and_a_forged_log_is_inconsistent(self):
+        partial = self.write_log(self.run, lines=[1, 3], path=self.tmp / "partial.jsonl")
+        rep = self.report(partial)
+        self.assertEqual(rep["verdict"], "INCOMPLETE")
+        self.assertEqual((rep["selected"][0]["read"]["status"], rep["selected"][0]["read"]["ranges"], rep["selected"][0]["read"]["cited_lines_covered"]),
+                         ("not_observed", "1, 3", False))
+        self.assertEqual(self.problem_codes(rep), {"read_not_observed"})
+        no_write = self.write_log(self.run, write=False, path=self.tmp / "nowrite.jsonl")
+        self.assertEqual(self.problem_codes(self.report(no_write)), {"generation_write_not_found"})
+        forged = self.write_log(self.run, path=self.run / "read-receipt.json")
+        rep = self.report(forged)
+        self.assertEqual((rep["verdict"], rep["selected"][0]["read"]["status"]), ("INCONSISTENT", "self_reported"))
+        bad = self.tmp / "bad.jsonl"
+        bad.write_text("{not json\n", encoding="utf-8")
+        self.assertEqual(self.problem_codes(self.report(bad)), {"host_log_invalid"})
+        with self.assertRaises(ev.Unreadable):
+            self.report(self.tmp / "no-such-log.jsonl")
+
+    def test_a_body_that_no_longer_matches_its_record_is_inconsistent(self):
+        p = self.run / "snapshots/doc-a/body.txt"
+        p.write_text(p.read_text(encoding="utf-8") + "x\n", encoding="utf-8")
+        rep = self.report()
+        self.assertEqual((rep["verdict"], rep["selected"][0]["integrity"], self.problem_codes(rep)), ("INCONSISTENT", "mismatch", {"body_mismatch"}))
+        self.assertEqual(rep["selected"][0]["read"]["reason"], "body_not_verified")
+        p.unlink()
+        rep = self.report()
+        self.assertEqual((rep["verdict"], rep["selected"][0]["integrity"]), ("INCONSISTENT", "missing"))
+
+    def test_citations_outside_the_run_are_inconsistent(self):
+        self.rewrite_rec(self.run, lambda r: r["changes"][2].update(rule_id="rule-skill-only"))  # a skill-only rule in a one-shot run
+        rep = self.report()
+        self.assertEqual((rep["verdict"], self.problem_codes(rep), rep["citations"][0]["in_scope"]), ("INCONSISTENT", {"cited_rule_out_of_scope"}, False))
+        self.rewrite_rec(self.run, lambda r: r["changes"][2].update(rule_id="rule-nope", source_id="doc-md"))
+        self.assertEqual(self.problem_codes(self.report()), {"unknown_rule", "cited_source_not_selected"})
+
+    def test_a_registry_changed_after_the_fetch_is_incomplete_and_rules_are_not_matched(self):
+        self.set_registry(lambda r: r["rules"].pop())
+        rep = self.report()
+        self.assertEqual((rep["verdict"], self.problem_codes(rep), rep["registry"]["matches"]), ("INCOMPLETE", {"registry_changed"}, False))
+        self.assertEqual((rep["selected"][0]["rules"]["applicable"], rep["citations"][0]["in_scope"]), (None, None))
+
+    def test_an_input_or_selection_that_is_not_what_was_fetched_is_inconsistent(self):
+        p = self.run / "input.json"
+        inp = json.loads(p.read_text(encoding="utf-8"))
+        inp["purpose"] = "skill-instructions"  # the registry would now also route doc-md
+        p.write_text(json.dumps(inp), encoding="utf-8")
+        self.assertEqual(self.problem_codes(self.report()), {"input_hash_mismatch", "selected_sources_mismatch"})
+
+    def test_a_source_that_was_not_fetched_is_incomplete(self):
+        self.rewrite_acq(self.run, lambda a: a["sources"][0].update(status="blocked", error="http_503"))
+        rep = self.report()
+        self.assertEqual((rep["verdict"], rep["selected"][0]["integrity"], self.problem_codes(rep)), ("INCOMPLETE", "unavailable", {"source_blocked"}))
+
+    def test_command_prints_json_or_markdown_and_exits_by_verdict(self):
+        code, out, err = self.cli("sources", "--run", str(self.run))
+        self.assertEqual((code, json.loads(out)["verdict"], json.loads(out)["mode"]), (0, "CONSISTENT", "run"))
+        self.assertIn("CONSISTENT []", err)
+        code, out, err = self.cli("sources", "--run", str(self.run), "--host-log", str(self.log), "--markdown")
+        self.assertEqual(code, 0)
+        for text in ("# 見た資料: run-1", "判定: **CONSISTENT**", "[`doc-a`](https://docs.example.com/guide)", "| 2 / 1 |",
+                     "unit-test", "人が審査したものは 0 件", "観測(読んだ行", "規則の解釈が正しいことや"):
+            self.assertIn(text, out)
+        self.assertIn("(exit 0)", err)
+        p = self.run / "snapshots/doc-a/body.txt"
+        p.write_text(p.read_text(encoding="utf-8") + "x\n", encoding="utf-8")
+        code, out, _ = self.cli("sources", "--run", str(self.run), "--markdown")
+        self.assertEqual(code, 1)
+        self.assertIn("**不一致**", out)
+        self.assertEqual(self.cli("sources", "--run", str(self.tmp / "no-such-run"))[0], 2)
+
+    def test_arguments_must_name_a_run_or_a_plan(self):
+        for argv in (("sources",), ("sources", "--target", "nope"), ("sources", "--target", "claude-code", "--purpose", "nope"),
+                     ("sources", "--target", "claude-code", "--host-log", "x"), ("sources", "--run", str(self.run), "--all-models"),
+                     ("sources", "--run", str(self.run), "--target", "claude-code")):
+            with self.subTest(argv):
+                self.assertEqual(self.cli(*argv)[0], 1)
+
+    def test_a_plan_can_come_from_an_input_file(self):
+        p = self.make_input("plan", target_id="claude-code", target_surface="api", model_id="unknown")
+        code, out, _ = self.cli("sources", "--input", str(p))
+        self.assertEqual((code, [x["source_id"] for x in json.loads(out)["selected"]]), (0, ["doc-a", "doc-api"]))
+
+
+class TestSourcesByModel(Base):
+    """A run of a model-limited guide: only the model it is for gets it, and the report says why the others did not."""
+    def setUp(self):
+        super().setUp()
+
+        def limit(reg):
+            for s in reg["sources"]:
+                if s["source_id"] == "doc-api":
+                    s["models"] = ["model-x"]
+            for r in reg["rules"]:
+                if r["source_id"] == "doc-api":
+                    r["models"] = ["model-x"]
+        self.set_registry(limit)
+
+    def test_the_run_reads_the_guide_of_its_model_only_and_the_report_agrees(self):
+        for model, got, reason in (("model-x", ["doc-a", "doc-api"], None), ("model-y", ["doc-a"], "model_mismatch"),
+                                   ("unknown", ["doc-a"], "model_unknown")):
+            with self.subTest(model):
+                code, acq = self.fetch(f"run-{model}", target_surface="api", model_id=model)
+                self.assertEqual(acq["selected_sources"], got)
+                rep = ev.sources_report(self.run_dir(f"run-{model}"))
+                self.assertEqual(([r["source_id"] for r in rep["selected"]], rep["verdict"]), (got, "CONSISTENT"))
+                guide = next(g for g in rep["model"]["guides"] if g["source_id"] == "doc-api")
+                self.assertEqual((guide["status"], guide.get("reason")), ("selected" if reason is None else "skipped", reason))
+                self.assertEqual(rep["model"]["model_specific_sources"], 1)
+
+    def test_a_misspelled_model_gets_no_guide_and_a_hint(self):
+        self.fetch("run-sp", target_surface="api", model_id="Model_X")
+        rep = ev.sources_report(self.run_dir("run-sp"))
+        self.assertEqual(([r["source_id"] for r in rep["selected"]], rep["model"]["spelling_hint"]), (["doc-a"], ["model-x"]))
+        self.assertIn("綴りが違うかもしれません", ev.render_sources(rep))
 
 
 class TestShippedEvals(unittest.TestCase):
