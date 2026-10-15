@@ -20,7 +20,7 @@
 | | `unknown` | 不明な場合(既定) |
 | `model_id` | モデルの ID | 不明な場合は `unknown` |
 
-- `unknown` は、`surfaces` と `models` が `all` の資料・規則にだけ一致します。`api` 向けの資料と、モデルを限定した規則は、使われません。
+- `unknown` は、`surfaces` と `models` が `all` の資料・規則にだけ一致します。`api` 向けの資料と、モデルを限定した資料・規則は、使われません。
 - 依頼されていない種類への変換(通常の依頼を Gems・Rule・Skill の作成に変えるなど)は、しません。
 
 ## 利用先と、取得される資料
@@ -28,32 +28,35 @@
 資料は、次のように選ばれます。
 
 - 「常に取得」の資料は、`purpose` と `target_surface` に関係なく取得されます。
-- 「条件付き」の資料は、`purpose` と `target_surface` の両方が合うときだけ、追加で取得されます。
+- 「条件付き」の資料は、`purpose` と `target_surface` の両方が合うときだけ、追加で取得されます。条件は、その資料の規則が使われる `purpose` と `target_surface` です。
+- 特定のモデルに限った資料(モデル別ガイド)は、`target_surface` が `api` で、`model_id` がそのモデルのときだけ取得されます。次の表には出ません。「`api` と `model_id` を指定すると」にあります。
+
+表の「条件付き」は、`target_surface` と `model_id` が `unknown` のときの追加分と、`target_surface` を `api` にしたときの追加分です。
 
 ### OpenAI
 
 | 利用先 | `target_id` | 常に取得 | 条件付き |
 |---|---|---|---|
-| ChatGPT Chat | `chatgpt` | `openai-prompting` | `api`: `openai-api-prompting` |
-| ChatGPT Work | `chatgpt-work` | `openai-prompting`、`openai-work` | `api`: `openai-api-prompting` |
-| Codex | `codex` | `openai-prompting` | `persistent-instructions`: `openai-agents-md`、`skill-instructions`: `openai-skills`、`api`: `openai-api-prompting` |
+| ChatGPT Chat | `chatgpt` | `openai-prompting` | `one-shot`: `openai-tasks-memory`<br>`persistent-instructions`: `openai-personalize`<br>`skill-instructions`: `openai-skills-plugins`<br>`api`: `openai-api-prompting` |
+| ChatGPT Work | `chatgpt-work` | `openai-prompting`、`openai-work` | `one-shot`: `openai-tasks-memory`<br>`persistent-instructions`: `openai-personalize`<br>`skill-instructions`: `openai-skills-plugins`<br>`api`: `openai-api-prompting` |
+| Codex | `codex` | `openai-prompting` | `one-shot`: `openai-best-practices`<br>`persistent-instructions`: `openai-agents-md`、`openai-personalize`、`openai-best-practices`<br>`skill-instructions`: `openai-skills`、`openai-skills-plugins`、`openai-best-practices`<br>`api`: `openai-api-prompting` |
 
 ### Anthropic
 
 | 利用先 | `target_id` | 常に取得 | 条件付き |
 |---|---|---|---|
-| Claude チャット | `claude` | `claude-chat-help` | `api`: `claude-model-prompting` |
-| Claude Cowork | `claude-cowork` | `claude-cowork-help` | `api`: `claude-model-prompting` |
-| Claude Code | `claude-code` | `claude-code-best-practices` | `skill-instructions`: `claude-code-skills`、`api`: `claude-model-prompting` |
+| Claude チャット | `claude` | `claude-chat-help` | `one-shot`: `claude-cowork-and-chat`、`claude-custom-visuals`、`claude-chat-prompt-design`、`claude-chat-response-too-brief`<br>`persistent-instructions`: `claude-cowork-and-chat`<br>`skill-instructions`: `claude-skills-best-practices`、`claude-skills-enterprise`<br>`api`: `claude-model-prompting` |
+| Claude Cowork | `claude-cowork` | `claude-cowork-help` | `one-shot`: `claude-cowork-and-chat`、`claude-custom-visuals`、`claude-cowork-computer-use`、`claude-cowork-schedule`<br>`persistent-instructions`: `claude-cowork-and-chat`、`claude-cowork-projects`<br>`skill-instructions`: `claude-skills-best-practices`、`claude-skills-enterprise`<br>`api`: `claude-model-prompting` |
+| Claude Code | `claude-code` | `claude-code-best-practices` | `one-shot`: `claude-code-prompt-library`、`claude-context-claude-md`<br>`persistent-instructions`: `claude-code-memory`、`claude-code-scheduled-tasks`<br>`skill-instructions`: `claude-code-skills`、`claude-skills-best-practices`、`claude-skills-enterprise`<br>`api`: `claude-model-prompting` |
 
 ### Google
 
 | 利用先 | `target_id` | 常に取得 | 条件付き |
 |---|---|---|---|
-| Gemini Apps(通常・Gems・Apps skill) | `gemini` | なし | `persistent-instructions` かつ `gems`: `gemini-gems`、`skill-instructions`: `gemini-app-skills`、`api`: `gemini-api-prompting` |
-| Antigravity | `antigravity` | なし | `persistent-instructions`: `antigravity-rules`、`skill-instructions`: `antigravity-skills`、`api`: `gemini-api-prompting` |
+| Gemini Apps(通常・Gems・Apps skill) | `gemini` | なし | `persistent-instructions` かつ `gems`: `gemini-gems`<br>`skill-instructions`: `gemini-app-skills`<br>`api`: `gemini-api-prompting` |
+| Antigravity | `antigravity` | なし | `one-shot`: `antigravity-cli-best-practices`<br>`persistent-instructions`: `antigravity-rules`、`antigravity-cli-best-practices`<br>`skill-instructions`: `antigravity-skills`<br>`api`: `gemini-api-prompting`(`agent-instruction` のときは、`antigravity-sdk-personas` も) |
 | Gemini Apps の Tasks | `gemini-agent-app` | `gemini-tasks` | `api`: `gemini-api-prompting` |
-| Gemini CLI | `gemini-cli` | `gemini-cli-memory` | `skill-instructions`: `gemini-cli-skills`、`api`: `gemini-api-prompting` |
+| Gemini CLI | `gemini-cli` | `gemini-cli-memory` | `persistent-instructions`: `gemini-cli-memory-tutorial`、`gemini-cli-extension-best-practices`、`gemini-cli-system-prompt`<br>`skill-instructions`: `gemini-cli-skills`、`gemini-cli-skills-best-practices`<br>`api`: `gemini-api-prompting` |
 | Google ADK のエージェント | `google-adk-agent` | `google-adk-instructions` | `api`: `gemini-api-prompting` |
 
 「Gemini の agent」が Tasks・CLI・ADK のどれか分からないときは、`target_id` を `unresolved` にします。この間は、検証済みの最適化は出ません。
@@ -64,16 +67,16 @@
 
 | 利用先 | one-shot | persistent-instructions | skill-instructions | agent-instruction |
 |---|---|---|---|---|
-| ChatGPT Chat | 3 | 0 | 0 | 0 |
-| ChatGPT Work | 4 | 0 | 0 | 0 |
-| Codex | 4 | 1 | 1 | 0 |
-| Claude チャット | 3 | 0 | 0 | 0 |
-| Claude Cowork | 2 | 0 | 0 | 0 |
-| Claude Code | 4 | 1 | 2 | 1 |
+| ChatGPT Chat | 4 | 1 | 2 | 0 |
+| ChatGPT Work | 5 | 1 | 2 | 0 |
+| Codex | 5 | 4 | 5 | 0 |
+| Claude チャット | 7 | 1 | 6 | 0 |
+| Claude Cowork | 6 | 2 | 6 | 0 |
+| Claude Code | 8 | 4 | 8 | 1 |
 | Gemini Apps | 資料なし | 資料なし | 2 | 資料なし |
-| Antigravity | 資料なし | 1 | 2 | 資料なし |
+| Antigravity | 2 | 2 | 2 | 資料なし |
 | Gemini Apps の Tasks | 2 | 0 | 0 | 0 |
-| Gemini CLI | 0 | 1 | 1 | 0 |
+| Gemini CLI | 0 | 4 | 2 | 0 |
 | Google ADK | 0 | 0 | 0 | 4 |
 
 - `0`: 資料は取得されますが、その `purpose` に使える規則がありません。`official` の変更は作れず、変更は `editorial` か `inference` になります。
@@ -87,22 +90,34 @@
 |---|---|---|
 | ChatGPT Chat・ChatGPT Work・Codex | `openai-api-instructions-param` | `one-shot`、`agent-instruction` |
 | Gemini Apps・Antigravity・Gemini Apps の Tasks・Gemini CLI・Google ADK | `gemini-api-clear-specific` | すべて |
-| Claude チャット・Claude Cowork・Claude Code | `claude-api-clear-direct`(下記の `model_id` のとき) | すべて |
+| Antigravity | `antigravity-sdk-templated-instructions` | `agent-instruction` |
+| Claude チャット・Claude Cowork・Claude Code | モデルを限定した規則(下記) | 規則による |
 
-モデルを限定した規則は、`claude-api-clear-direct` だけです。`target_surface` が `api` で、`model_id` が次のいずれかのときだけ使えます。他のモデルと `unknown` では、使われません。
+モデルを限定した規則は 33 件です。`target_surface` が `api` で、`model_id` が規則の `models` に含まれるときだけ使えます。他のモデルと `unknown` では、使われません。モデルを限定した資料(モデル別ガイド)も、同じ条件でだけ取得されます。
 
-- `claude-fable-5-1`
-- `claude-opus-5-5`
-- `claude-sonnet-5-5`
-- `claude-haiku-5-5`
+| `model_id` | 取得される、モデル別ガイド | 使える規則 |
+|---|---|---|
+| `claude-fable-5` | `claude-prompting-fable-5` | 4 件 |
+| `claude-fable-5-1` | `claude-prompting-fable-5-1` | 5 件(`claude-api-clear-direct` を含む) |
+| `claude-opus-4-8` | `claude-prompting-opus-4-8` | 4 件 |
+| `claude-opus-5` | `claude-prompting-opus-5` | 4 件 |
+| `claude-opus-5-5` | `claude-prompting-opus-5-5` | 5 件(`claude-api-clear-direct` を含む) |
+| `claude-sonnet-5` | `claude-prompting-sonnet-5` | 4 件 |
+| `claude-sonnet-5-5` | `claude-prompting-sonnet-5-5` | 6 件(`claude-api-clear-direct` を含む) |
+| `claude-haiku-5-5` | `claude-prompting-haiku-5-5` | 4 件(`claude-api-clear-direct` を含む) |
+
+- 件数は、`purpose` を問わない合計です。`purpose` によって、使える規則は変わります。
+- `claude-api-clear-direct` は、全モデル共通の資料 `claude-model-prompting` の規則で、上の 4 つのモデルにだけ付いています。
+- Claude のモデル別ガイドの規則は、`api` の指示の書き方(範囲の明示、完了条件、冗長さ、進捗の報告など)に限ります。API のパラメーター(`effort` や `max_tokens` など)の設定は、プロンプトの書き換えではないので、規則にしていません。
 
 ## 利用先ごとの注意
 
-- ChatGPT Chat・ChatGPT Work: 常に取得する資料の規則は、すべて `one-shot` 用です。常設指示などを頼んでも、`official` の根拠は付きません。
-- Codex: AGENTS.md は `persistent-instructions`、スキルは `skill-instructions` で扱います。それぞれ専用の資料と規則があります。
-- Claude Code: `claude-code-verification` だけが、4 つの `purpose` すべてに使えます。他の 3 規則は `one-shot` 用です。
+- ChatGPT Chat・ChatGPT Work: 常に取得する資料の規則は、すべて `one-shot` 用です。常設指示(カスタム指示)とスキルの規則は、条件付きの資料にあります(上の表)。`agent-instruction` に使える規則は、`api` のときの `openai-api-instructions-param` だけです。
+- Codex: AGENTS.md は `persistent-instructions`、スキルは `skill-instructions` で扱います。それぞれ専用の資料と規則があります。`openai-best-practices` は、`one-shot`・`persistent-instructions`・`skill-instructions` のいずれにも使えます。
+- Claude チャット・Claude Cowork: 全会話に適用する好みの指示は、`claude-cowork-and-chat` の規則で扱います。Cowork のプロジェクトの指示は、`claude-cowork-projects` の規則です。`agent-instruction` に使える規則は、`api` とモデルを指定したときの、モデルを限定した規則だけです。
+- Claude Code: `claude-code-verification` だけが、4 つの `purpose` すべてに使えます。CLAUDE.md は `persistent-instructions`、スキルは `skill-instructions` で扱います。それぞれ専用の資料と規則があります。
 - Gemini Apps: `one-shot` 用の資料はありません。Gems の常設指示は、`target_surface` を `gems` にします。
-- Antigravity: `one-shot` 用の資料はありません。Antigravity CLI での実測は [antigravity.md](antigravity.md) にあります。
+- Antigravity: `one-shot` 用の資料は、`antigravity-cli-best-practices` だけです(規則 2 件)。Antigravity CLI での実測は [antigravity.md](antigravity.md) にあります。
 - Gemini CLI: `GEMINI.md` などの常設指示と、スキルが対象です。`one-shot` では、`official` の根拠は付きません。
 - Google ADK: `agent-instruction` だけが対象です。
 

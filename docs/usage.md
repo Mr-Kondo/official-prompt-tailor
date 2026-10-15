@@ -46,6 +46,6 @@ verify: INCOMPLETE ['mode_mismatch', 'no_host_log', 'status_not_for_mode'] (exit
 - blocked / missing / stale の資料。
 - target が `unresolved`。
 - provisional 生成。
-- 適用できる公式資料がない target(例: 通常の `gemini` / `antigravity` の一回の依頼)。
+- 適用できる公式資料がない target(例: 通常の `gemini` の一回の依頼)。
 - 外部ツール由来の本文(origin を独立確認できない)。
 - 規則の審査後に、資料本文が変わった(`rereview_pending`)。

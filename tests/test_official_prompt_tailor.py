@@ -723,8 +723,8 @@ class TestRouting(unittest.TestCase):
     def setUpClass(cls):
         cls.reg, _ = ev.load_registry(SKILL / "references" / "registry.json")
 
-    def route(self, target, purpose="one-shot", surface="unknown"):
-        return ev.select_sources(self.reg, {"target_id": target, "purpose": purpose, "target_surface": surface})
+    def route(self, target, purpose="one-shot", surface="unknown", model="unknown"):
+        return ev.select_sources(self.reg, {"target_id": target, "purpose": purpose, "target_surface": surface, "model_id": model})
 
     def test_all_eleven_targets_have_expected_minimum_sources(self):
         expect = {"chatgpt": ["openai-prompting"], "chatgpt-work": ["openai-prompting", "openai-work"],
@@ -735,7 +735,8 @@ class TestRouting(unittest.TestCase):
         self.assertEqual(set(expect), set(ev.TARGET_IDS))
         for target, want in expect.items():
             with self.subTest(target):
-                self.assertEqual(self.route(target), want)
+                # the required sources come first; one-shot also pulls the conditional sources that hold for every surface
+                self.assertEqual(self.route(target)[:len(want)], want)
         self.assertEqual(self.route("unresolved"), [])
 
     def test_conditional_sources_need_purpose_and_surface(self):
@@ -762,6 +763,16 @@ class TestRouting(unittest.TestCase):
             with self.subTest(no=sid, purpose=purpose):
                 self.assertNotIn(sid, self.route(target, purpose, surface))
 
+    def test_a_source_limited_to_a_model_is_fetched_only_for_that_model(self):
+        # the Opus 5.5 guide is routed for every Claude API run, but its rules apply to claude-opus-5-5 alone
+        for model, has_opus, has_sonnet in (("claude-opus-5-5", True, False), ("claude-sonnet-5-5", False, True),
+                                            ("claude-opus-4-0", False, False), ("unknown", False, False)):
+            with self.subTest(model=model):
+                got = self.route("claude", "one-shot", "api", model)
+                self.assertEqual(("claude-prompting-opus-5-5" in got, "claude-prompting-sonnet-5-5" in got), (has_opus, has_sonnet))
+                self.assertIn("claude-model-prompting", got)  # a source for all models is kept
+        self.assertNotIn("claude-prompting-opus-5-5", self.route("claude", "one-shot", "unknown", "claude-opus-5-5"))  # surface still decides
+
     def test_distinct_gemini_products_are_not_merged(self):
         ids = {t: self.route(t) for t in ("gemini-agent-app", "gemini-cli", "google-adk-agent", "gemini", "antigravity")}
         flat = [tuple(v) for v in ids.values() if v]
@@ -769,7 +780,7 @@ class TestRouting(unittest.TestCase):
 
     def test_registry_is_internally_consistent_and_rules_are_reviewed(self):
         sources = {s["source_id"] for s in self.reg["sources"]}
-        self.assertEqual(len(sources), 19)
+        self.assertEqual(len(sources), 50)
         routed = {i for t in self.reg["targets"] for i in t["required_sources"] + [x for c in t["conditional_sources"] for x in c["source_ids"]]}
         self.assertEqual((sources - routed, sources - {r["source_id"] for r in self.reg["rules"]}), (set(), set()))  # no dead source
         for r in self.reg["rules"]:
@@ -781,6 +792,10 @@ class TestRouting(unittest.TestCase):
         for r in self.reg["rules"]:
             if r["source_id"] in api:
                 self.assertEqual(r["surfaces"], ["api"])  # API advice is never applied to UI surfaces
+        limited = {s["source_id"]: s["models"] for s in self.reg["sources"] if s["models"] != ["all"]}
+        for r in self.reg["rules"]:
+            if r["source_id"] in limited:
+                self.assertTrue(set(r["models"]) <= set(limited[r["source_id"]]), r["rule_id"])  # a model's guide never grounds another model's rule
 
 
 class TestExecutionHosts(Base):

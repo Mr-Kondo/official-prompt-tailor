@@ -10,7 +10,7 @@
    - `source_body_sha256`(= `acquisition.json` の `body_sha256`)、`reviewed_at`、`reviewer_id` を更新する。
    - 本文が変わると、旧審査は引き継がれず `rereview_pending` になります。
 3. 実行中に、allowlist・scope・規則を緩めて合格させない。registry の SHA-256 は acquisition と verification に記録され、取得後に registry が変わると `FAIL` です。
-4. 初期規則 34 件は、実装時に実行主体(Claude Code, claude-sonnet-5-5)が、取得本文と照合して審査しました。人による審査ではありません(`reviewer_id` に明記)。人が確認した場合だけ、`reviewer_id` を人の識別子にしてください。
+4. 規則の審査は、これまですべて実行主体(Claude Code, claude-sonnet-5-5)が、取得本文と照合して行いました。初期の 34 件は実装時、追加の 70 件(2026-10-15 に、候補 59 件のうち 31 資料から採用した分)は採用時です。人による審査ではありません(`reviewer_id` に明記)。人が確認した場合だけ、`reviewer_id` を人の識別子にしてください。
 
 ### 移転の確認(2026-10-14)
 
@@ -63,6 +63,7 @@ python3 tools/maintain.py discover
 - `www.`、`.md`、`/index`、末尾の `/`、クエリ、http と https の違いは、同じページとして扱います。他のホストへのリンクは数えません。
 - 取得できなかった一覧は、2 秒待って 1 回だけ取得し直し、2 回目の結果を採ります(`drift` と同じです)。通信エラーや、配信の切り替え中の応答で、その一覧の候補が報告から消えないようにするためです。
 - 見送るページは、`--mark-seen` で既読にして、`tools/discovery-seen.json` をコミットします。採用するページは、先に登録するか、次の「登録案を作る」へ進みます。
+- 採用するのは、本文に、規則にできる記述(引用できる、指示の書き方についての助言)があるページだけです。テストは、すべての資料が配線され、`reviewed` の規則を 1 件以上持つことを求めます。規則のない資料は、`drift` でも変更を検知できません(`drift` が比べるのは、規則に記録したハッシュです)。管理・安全・構成・操作手順の説明だけのページは、見送ります。2026-10-15 の候補 59 件は、`llms.txt` のキーワードに合っただけのページを多く含んでいました。
 - `verdict` は、`CANDIDATES`、`INCOMPLETE`、`NONE` のいずれかです。候補が 1 件でもあれば、取得できない一覧があっても `CANDIDATES` です(取得できない一覧は、`indexes` の `status` と `error` に出ます)。候補がなく、取得できない一覧があるときが `INCOMPLETE` で、どちらもなければ `NONE` です。終了コードは、`NONE` が 0、それ以外が 2 です。
 
 `llms.txt` がないサイトは、対象外です。手で確かめてください。
@@ -91,7 +92,7 @@ python3 tools/maintain.py propose --url https://code.claude.com/docs/en/memory.m
 2. `sources` に追加します。「登録案を作る」の `source` を貼るか、次のキーで書きます。すべて必須で、未知のキーは拒否されます。
    - `source_id`: 英数字・`.`・`_`・`-` で、64 文字以内。
    - `allowed_urls`: https の URL。ホスト・パス・クエリが完全一致で照合され、`#` は使えません。`fetch` は先頭の URL から取得し、リダイレクト先は、いずれかの URL と一致するときだけ許可されます。
-   - `target_ids`・`surfaces`・`models`: 資料が当てはまる範囲。限定しないときは `["all"]`。
+   - `target_ids`・`surfaces`・`models`: 資料が当てはまる範囲。限定しないときは `["all"]`。特定のモデルのガイドは、`models` にそのモデルの ID(例: `["claude-opus-5-5"]`)を書きます。この資料は、`model_id` がそのモデルのときだけ取得されます。その資料の規則の `models` も、これに含まれるものだけにします(テストが確かめます)。
    - `category`: 既存に合わせて `product-prompting` / `product-feature` / `api-prompting`。
    - `extraction`: 本文の取り出し方。次のいずれかです。
      - `html-main-v1`: 最初の `<main>`
@@ -105,7 +106,7 @@ python3 tools/maintain.py propose --url https://code.claude.com/docs/en/memory.m
    - 最初は `review_status` を `unreviewed` にします。`source_body_sha256`・`reviewed_at`・`reviewer_id` は `null` です。
    - `source_excerpt` は、本文にそのまま現れる短い引用にします。
    - 本文と照合して審査したら、`"reviewed"` に変えて、3 項目を埋めます。`source_body_sha256` は、手順 4 の `acquisition.json` の `body_sha256` です。
-   - `unreviewed` の規則を根拠に引用すると、`verify` は `FAIL` です。
+   - `unreviewed` の規則を根拠に引用すると、`verify` は `FAIL` です。テストは、registry の規則がすべて `reviewed` であることを求めるので、コミットの前に審査します。
 6. 新しいドメインがあれば、README の「必要な接続先」に足します。
 7. テストを実行します。
 

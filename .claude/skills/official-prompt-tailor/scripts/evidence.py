@@ -485,7 +485,8 @@ def load_registry(path=None):
 
 
 def select_sources(reg, inp):
-    """Sources required for this target + those whose purpose AND surface conditions both match."""
+    """Sources required for this target + those whose purpose AND surface conditions both match.
+    A source limited to certain models is kept only for those models: its rules cannot apply to any other."""
     if inp["target_id"] == "unresolved":
         return []
     t = next(t for t in reg["targets"] if t["target_id"] == inp["target_id"])
@@ -493,7 +494,8 @@ def select_sources(reg, inp):
     for c in t["conditional_sources"]:
         if ("all" in c["purposes"] or inp["purpose"] in c["purposes"]) and in_list(c["surfaces"], inp["target_surface"]):
             ids += [i for i in c["source_ids"] if i not in ids]
-    return ids
+    models = {s["source_id"]: s["models"] for s in reg["sources"]}
+    return [i for i in ids if in_list(models[i], inp["model_id"])]
 
 
 # ---------------------------------------------------------------- input / entries
