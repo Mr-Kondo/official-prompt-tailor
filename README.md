@@ -12,7 +12,7 @@
   references/registry.json       資料(50)・対象(11)・審査済み規則(104)
   references/evidence-contract.md / review-rubric.md
   scripts/evidence.py            fetch / verify / assess / compare / drift / rules / sources(標準ライブラリのみ)
-tools/maintain.py                保守用(スキルには同梱しない): discover / propose
+tools/maintain.py                保守用(スキルには同梱しない): discover / propose / adopt / docs / audit
 .github/workflows/               test(Python 3.9〜3.14)・watch(週次の drift と discover)・release
 tests/   evals/prompt-tailor-cases.jsonl   outputs/(Git 管理外)
 ```
@@ -97,7 +97,7 @@ Claude Code で `/official-prompt-tailor` を呼ぶか、「このプロンプ�
 
 ## メンテナンスと審査
 
-公式資料は変わります。更新の確認(`drift`)と新規ページの発見(`tools/maintain.py discover`)は、毎週 GitHub Actions でも実行されます。規則の再確認方法、資料の追加方法、意味審査、効果測定、リリースの手順は [docs/maintenance.md](docs/maintenance.md) にあります。
+公式資料は変わります。更新の確認(`drift`)と新規ページの発見(`tools/maintain.py discover`)は、毎週 GitHub Actions でも実行されます。規則の再確認方法、資料の追加方法、意味審査、効果測定、リリースの手順は [docs/maintenance.md](docs/maintenance.md) にあります。別のエージェントに手順を通させた結果と、その検査(`audit`)は [docs/independent-runs.md](docs/independent-runs.md) にあります。
 
 ## テスト
 

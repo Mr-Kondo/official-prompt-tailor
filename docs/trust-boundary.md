@@ -35,5 +35,5 @@
 - リダイレクトは自動追跡しません。各 hop の接続前に、登録 URL と照合します(最大 5 hop、timeout 15 秒、応答 5 MiB)。
 - サーバーが求めていないのに gzip で返した応答(antigravity.google が、1 割ほどの応答でそうします)は、展開して読みます。展開後も 5 MiB が上限で、超えると `response_too_large` です。`br` など読めない圧縮と、壊れた・途中で切れた gzip は、`blocked`(`unsupported_content_encoding` / `bad_content_encoding`)です。
 - 新しい依存パッケージ、グローバル設定、hook、自動適用はありません。
-- 保守用の `tools/maintain.py` は、registry か `tools/discovery.json` にあるホストの、https のページだけを取得します。registry は書き換えません。`discover` が挙げる候補と、`propose` が作る登録案は、公式であることも、規則の審査も保証しません。
+- 保守用の `tools/maintain.py` は、registry か `tools/discovery.json` にあるホストの、https のページだけを取得します。registry を書き換えるのは、`adopt --write` だけです。`adopt` は、審査者が書いた spec の引用が、取得した本文にあることを確かめて、審査者の `reviewer_id` を記録します。規則の解釈が正しいことは確かめません。`discover` が挙げる候補と、`propose` が作る登録案は、公式であることも、規則の審査も保証しません。`docs --write` が書き換えるのは、README と `docs/` の、registry から求めた件数と表だけです。
 - 週次の GitHub Actions(`watch.yml`)が書くのは、このリポジトリの Issue だけです。`drift` / `discover` の結果を、ラベル付きの 1 件の Issue に置きます。

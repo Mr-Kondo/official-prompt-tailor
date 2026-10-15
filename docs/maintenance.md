@@ -10,7 +10,7 @@
    - `source_body_sha256`(= `acquisition.json` の `body_sha256`)、`reviewed_at`、`reviewer_id` を更新する。
    - 本文が変わると、旧審査は引き継がれず `rereview_pending` になります。
 3. 実行中に、allowlist・scope・規則を緩めて合格させない。registry の SHA-256 は acquisition と verification に記録され、取得後に registry が変わると `FAIL` です。
-4. 規則の審査は、これまですべて実行主体(Claude Code, claude-sonnet-5-5)が、取得本文と照合して行いました。初期の 34 件は実装時、追加の 70 件(2026-10-15 に、候補 59 件のうち 31 資料から採用した分)は採用時です。人による審査ではありません(`reviewer_id` に明記)。人が確認した場合だけ、`reviewer_id` を人の識別子にしてください。
+4. 規則の審査は、これまですべて実行主体(Claude Code, claude-sonnet-5-5)が、取得本文と照合して行いました。初期の 34 件は実装時、追加の 70 件(2026-10-15 に、候補 59 件のうち 31 資料から採用した分)は採用時です。人による審査ではありません(`reviewer_id` に明記)。人が確認した場合だけ、`reviewer_id` を `human:<名前か役割>` にしてください。`rules` と `sources` は、`human:` で始まる `reviewer_id` だけを人の審査として数えます(`human:` のあとが空だと、registry の検査が拒否します)。`tests/test_official_prompt_tailor.py` の `test_no_rule_claims_a_human_review_that_nobody_has_made` は、エージェントが自分で人の審査を書くのを防ぐ番人です。人が実際に審査したときは、その規則に合わせて、このテストを直します。
 
 ### 移転の確認(2026-10-14)
 
@@ -21,7 +21,7 @@
 
 ## 資料の更新と追加を取り込む
 
-更新の確認と、新しいページの発見は、自動化されています(毎週の GitHub Actions でも動きます)。資料と規則の追加、規則の審査は手作業です。自動化は、人が見るべきものを挙げるだけで、registry を書き換えません。
+更新の確認と、新しいページの発見は、自動化されています(毎週の GitHub Actions でも動きます)。`drift` と `discover` は、人が見るべきものを挙げるだけで、registry を書き換えません。資料と規則の追加は、審査者が spec(どのページの、どの引用を、どの規則にするか)を書き、`adopt` が registry に書き込みます。どの記述が規則になり、何を意味するかを決める審査は、審査者の仕事です。
 
 ### 更新を確かめる
 
@@ -84,9 +84,52 @@ python3 tools/maintain.py propose --url https://code.claude.com/docs/en/memory.m
 
 出力の `source` を、`sources` に貼ります。`targets` への配線、`rules` の追加、審査は、次の「新しい資料を足す」の手順 3 以降です。
 
-### 新しい資料を足す
+### 新しい資料を足す(`adopt`)
 
-新しい公式ページ(新しい製品やモデルのガイドなど)を使えるようにする手順です。`references/registry.json` を編集します。
+新しい公式ページ(新しい製品やモデルのガイドなど)を使えるようにする手順です。審査者が spec を書き、`adopt` が registry に書き込みます。
+
+1. 「登録案を作る」の `propose` で、ページの `source`(`extraction` と `body_locators` を含みます)を作ります。
+2. ページを読み、規則にできる記述(指示の書き方についての助言)を選んで、spec を書きます。`sources` の各要素は、`propose` の `source` のキーに、`rules` を加えたものです。
+3. `adopt` を、`--write` なしで実行します(登録案の確認だけで、何も書きません)。問題がなければ、`--write` を付けて書き込みます。
+4. `docs --write` で、README と `docs/targets.md` の件数と表を直します。テストを実行します。
+
+```bash
+python3 tools/maintain.py adopt --spec spec.json            # 確認だけ
+python3 tools/maintain.py adopt --spec spec.json --write    # registry.json に書く
+python3 tools/maintain.py docs --write
+```
+
+```json
+{
+  "schema_version": 1,
+  "reviewer_id": "claude-code/claude-sonnet-5-5 (agent review at adoption; not human)",
+  "sources": [{
+    "source_id": "claude-prompting-example", "allowed_urls": ["https://platform.claude.com/docs/en/<page>.md"],
+    "target_ids": ["claude", "claude-cowork", "claude-code"], "surfaces": ["api"], "models": ["claude-example-5"],
+    "category": "api-prompting", "extraction": "markdown-v1", "body_locators": ["<見出し 1>", "<見出し 2>"],
+    "rules": [{
+      "rule_id": "claude-api-example-rule", "target_ids": ["claude", "claude-cowork", "claude-code"], "surfaces": ["api"],
+      "models": ["claude-example-5"], "purposes": ["one-shot", "agent-instruction"],
+      "preconditions": ["規則を使える条件"], "exclusions": ["使ってはいけない場合"],
+      "source_excerpt": "本文にそのまま現れる引用(400 文字以内)", "meaning": "規則の意味", "allowed_change": "許される変更"
+    }]
+  }]
+}
+```
+
+- `reviewer_id` は、審査した主体です。エージェントなら `…; not human` と明記し、人なら `human:<名前か役割>` にします。`rules` と `sources` は、`human:` で始まるものだけを人の審査として数えます。
+- `adopt` が確かめることは、次のとおりです。どれか 1 つでも違えば、何も書かずに終わります(契約違反は終了コード 1、本文を安定して取得できないときは 2)。
+  - `registry.json` が、`dump_registry` の書式(1 行に 1 レコード)であること。
+  - 取得先が https で、registry か `tools/discovery.json` が使うホストにあり、登録済みのページでも `source_id` でもないこと。
+  - 本文が、2 回の取得で一致すること(最大 6 回まで取り直します。失敗した取得は数えません)。
+  - 各規則の `source_excerpt` が、取得した本文にそのまま現れ、400 文字以内であること。規則の `target_ids` が資料の範囲内であること。
+  - API 限定の資料の規則は、`surfaces` が `["api"]` であること。モデル限定の資料の規則は、`models` がその資料の `models` に含まれること。ほかの検査(`registry_problems`)も通ること。
+- `adopt` が書くのは、`source_body_sha256`(取得した本文)、`reviewed_at`、`reviewer_id`、`review_status: reviewed`、`source_locator`(= 引用)と、`targets` への経路です。経路は、規則の `purposes` の和集合に対してだけ作ります。規則のない `purpose` では、その資料は取得されません。
+- Claude Code のサンドボックスは、`.claude/skills` の下に書けません。`--write` が `Operation not permitted` で止まるときは、ターミナルで実行します。
+
+#### 手で足す場合
+
+`adopt` が使えないときの手順です。`references/registry.json` を直接編集します。書式を崩すと、`adopt` が使えなくなります(`dump_registry` が、現在のファイルをそのまま再現できる必要があります)。
 
 1. 公式のドメインにあり、https で、ログインなしに読めるページか確かめます。
 2. `sources` に追加します。「登録案を作る」の `source` を貼るか、次のキーで書きます。すべて必須で、未知のキーは拒否されます。
@@ -112,7 +155,7 @@ python3 tools/maintain.py propose --url https://code.claude.com/docs/en/memory.m
 
 ### 新しい利用先を足す
 
-利用先(`target_id`)の追加は、registry だけでは済みません。`evidence.py` の `TARGET_IDS` にも足します。registry は、`TARGET_IDS` のすべてを `targets` に定義する決まりだからです。SKILL.md の対象の表、README、[targets.md](targets.md) も更新します。
+利用先(`target_id`)の追加は、registry だけでは済みません。`evidence.py` の `TARGET_IDS` にも足します。registry は、`TARGET_IDS` のすべてを `targets` に定義する決まりだからです。SKILL.md の対象の表、README、[targets.md](targets.md) も更新します。`tools/maintain.py` の `ROUTING_LABELS` と `VENDORS` にも足してください(足りないと、`docs` が契約違反として知らせます)。`docs --write` が、[targets.md](targets.md) の表を直します。
 
 ### 自動実行(GitHub Actions)
 
@@ -125,6 +168,39 @@ python3 tools/maintain.py propose --url https://code.claude.com/docs/en/memory.m
 `.github/workflows/test.yml` は、push と pull request で、Ubuntu は Python 3.9〜3.14、macOS と Windows は 3.9 と 3.14 のテストを実行します。どの組み合わせが失敗しても、workflow は失敗になります。
 
 3 つの workflow の Ubuntu は、`ubuntu-24.04` に固定しています。`ubuntu-latest` が Ubuntu 26 へ移り始めるのが 2026-10-19 で、`watch.yml` の定期実行と同じ日だからです(`test.yml` には、Python 3.9 のビルドが Ubuntu 26.04 にない、という理由もあります)。外すのは、`ubuntu-latest` で手動実行(`watch.yml`)が通ったあとです。
+
+## 別のエージェントで手順を通す
+
+実機の確認を、規則を書いたエージェント自身が行うと、SKILL.md の読み違いを見落とします。別の文脈のエージェント(Claude Code のサブエージェントなど)に、依頼文と run-id だけを渡して通させ、その記録を規則だけで検査します。結果と、見つかった問題は [independent-runs.md](independent-runs.md) にあります。
+
+1. エージェントには、依頼文とスキルの呼び出しだけを渡します。手順のヒントは渡しません。最終回答のあとに、手順で迷った点を書かせます。
+2. 終わったら、そのエージェント自身の記録(`~/.claude/projects/<プロジェクト>/<セッション>/subagents/agent-<id>.jsonl`)で検査します。
+
+```bash
+python3 .claude/skills/official-prompt-tailor/scripts/evidence.py sources --run outputs/official-prompt-tailor/<run-id> --host-log <記録> --markdown
+python3 .claude/skills/official-prompt-tailor/scripts/evidence.py verify --run outputs/official-prompt-tailor/<run-id> --mode live --host-log <記録>   # verification.json を上書きする
+python3 tools/maintain.py audit --run outputs/official-prompt-tailor/<run-id> --transcript <記録>
+```
+
+`audit` が確かめるのは、手順を守ったか、最終回答が記録と合っているかです。各検査は `PASS` / `FAIL` / `WARN` / `NA` で、`FAIL` が 1 つでもあれば全体が `FAIL`(終了コード 1)です。
+
+| 検査 | 確かめること |
+|---|---|
+| `fetched`・`wrote_the_result` | `evidence.py fetch` を実行し、`optimized.md` か `recommendations.json` を書いた |
+| `drift_before_writing`・`rules_before_writing` | `drift --run` と `rules --run` を、最初の書込みより前に実行した |
+| `verified_after_writing` | 最初の書込みのあとに `verify` を実行し、`verification.json` が残っている |
+| `sources_after_verify` | 書込みのあとの最初の `verify` より後に、`sources --run` を実行した |
+| `selected_bodies_were_read` | 選ばれた資料のすべてが、最初の書込みの前に、成功した `Read` で示された(`verify` と同じ規則) |
+| `no_log_the_user_did_not_give` | 依頼文にないログのパスを、`--host-log` に使っていない |
+| `registry_not_read_whole` | `registry.json` を全体では読んでいない(`limit` なしの `Read`、`cat` など) |
+| `answer_has_three_lines` | 最終回答に、参照検証・意味審査・効果の 3 行がある |
+| `answer_matches_the_records` | 3 行が、`verification.json`・`semantic-review.json`(と `semantic-verification.json`)・`evaluation.json` の記録と同じ。記録がないものは「未実施」と読む(`assess` を実行していなければ `NOT_REVIEWED`、`evaluation.json` がなければ `NOT_EVALUATED`) |
+| `no_overclaim` | 採用できない案を「候補」と書き、「検証済み」「改善済み」と言っていない(同じ文の中の否定は除く)。採用できる案でも、実測(`IMPROVED_ON_TEST_SET`)がなければ「改善済み」と言っていない |
+| `copy_prompt_in_answer` | `optimized.md` の本文が、最終回答にそのままある |
+| `sources_report_pasted_as_printed` | `sources --markdown` の出力が、スクリプトが出すとおりに貼ってある(空行の違いは無視) |
+| `original_literals_kept` | 原文のコマンド・数値・固有名詞(英数字)が、`optimized.md` に残っている(`WARN` のみ) |
+
+`audit` は、改稿の良し悪しを見ません。意味審査と効果測定の代わりにはなりません。`sources_report_pasted_as_printed` は、いまの `sources --markdown` の書式と比べるので、書式を変えたあとは、古い記録でこの検査だけが失敗します。
 
 ## 意味審査
 

@@ -825,24 +825,13 @@ class TestRouting(unittest.TestCase):
         flat = [tuple(v) for v in ids.values() if v]
         self.assertEqual(len(flat), len(set(flat)))
 
-    def test_registry_is_internally_consistent_and_rules_are_reviewed(self):
-        sources = {s["source_id"] for s in self.reg["sources"]}
-        self.assertEqual(len(sources), 50)
-        routed = {i for t in self.reg["targets"] for i in t["required_sources"] + [x for c in t["conditional_sources"] for x in c["source_ids"]]}
-        self.assertEqual((sources - routed, sources - {r["source_id"] for r in self.reg["rules"]}), (set(), set()))  # no dead source
+    def test_no_rule_claims_a_human_review_that_nobody_has_made(self):
+        # The other rules of the registry are tested in test_maintain.py (registry_problems). A person's review is recorded as
+        # reviewer_id "human:<name>" (docs/maintenance.md); this guard keeps an agent from writing one for itself. When a person
+        # has really reviewed a rule, change this test with that rule.
         for r in self.reg["rules"]:
             with self.subTest(r["rule_id"]):
-                self.assertEqual(r["review_status"], "reviewed")
-                self.assertNotIn("human", r["reviewer_id"].replace("not human", ""))  # never claims a human review
-                self.assertTrue(r["preconditions"] and r["exclusions"])
-        api = {s["source_id"] for s in self.reg["sources"] if s["surfaces"] == ["api"]}
-        for r in self.reg["rules"]:
-            if r["source_id"] in api:
-                self.assertEqual(r["surfaces"], ["api"])  # API advice is never applied to UI surfaces
-        limited = {s["source_id"]: s["models"] for s in self.reg["sources"] if s["models"] != ["all"]}
-        for r in self.reg["rules"]:
-            if r["source_id"] in limited:
-                self.assertTrue(set(r["models"]) <= set(limited[r["source_id"]]), r["rule_id"])  # a model's guide never grounds another model's rule
+                self.assertNotIn("human", r["reviewer_id"].replace("not human", ""), "a rule claims a review by a person")
 
 
 class TestExecutionHosts(Base):
@@ -1935,6 +1924,19 @@ class TestSkillFiles(unittest.TestCase):
         for rel in re.findall(r"\]\((?!http)([^)]+)\)", text):
             self.assertTrue((SKILL / rel).exists(), rel)
         self.assertLessEqual(len(text.splitlines()), 120)  # entry point stays short; detail lives in references/
+
+    def test_every_subcommand_the_documents_run_exists(self):
+        import re
+        known = {tool: set(re.findall(r'sub\.add_parser\("(\w+)"\)', path.read_text(encoding="utf-8")))
+                 for tool, path in (("evidence.py", SKILL / "scripts" / "evidence.py"), ("maintain.py", ROOT / "tools" / "maintain.py"))}
+        self.assertTrue(known["evidence.py"] >= {"fetch", "verify", "rules", "sources"} and known["maintain.py"] >= {"adopt", "docs", "audit"})
+        documents = [SKILL / "SKILL.md", ROOT / "README.md", *sorted((ROOT / "docs").glob("*.md")), *sorted((SKILL / "references").glob("*.md"))]
+        mentioned = 0
+        for doc in documents:
+            for tool, sub in re.findall(r"(evidence\.py|maintain\.py)\s+([a-z]+)\b", doc.read_text(encoding="utf-8")):
+                mentioned += 1
+                self.assertIn(sub, known[tool], f"{doc.name}: `{tool} {sub}` is not a subcommand")
+        self.assertGreater(mentioned, 30)  # the pattern still finds the commands the documents give
 
     def test_rubric_declares_a_version(self):
         self.assertRegex((SKILL / "references" / "review-rubric.md").read_text(encoding="utf-8"), r"(?m)^rubric_version: \S+")

@@ -2,7 +2,7 @@
 
 プロンプトを使う先(`target_id`)ごとに、取得される資料、使える規則、指定する値をまとめます。スキルを動かす製品(`execution_host`)は別で、[products.md](products.md) にあります。
 
-表は、`registry.json` の 2026-10-15 時点の内容です。正は `registry.json` です。各資料の URL は `allowed_urls` にあり、規則の最新の一覧は、末尾の「規則を一覧する」で出せます。
+表は `registry.json` から作ります(`python3 tools/maintain.py docs --write`。マーカーの間は手で直しません)。正は `registry.json` です。各資料の URL は `allowed_urls` にあり、規則の最新の一覧は、末尾の「規則を一覧する」で出せます。
 
 ## 決める 4 つの値
 
@@ -35,29 +35,35 @@
 
 ### OpenAI
 
+<!-- generated:routing-openai begin (python3 tools/maintain.py docs --write) -->
 | 利用先 | `target_id` | 常に取得 | 条件付き |
 |---|---|---|---|
 | ChatGPT Chat | `chatgpt` | `openai-prompting` | `one-shot`: `openai-tasks-memory`<br>`persistent-instructions`: `openai-personalize`<br>`skill-instructions`: `openai-skills-plugins`<br>`api`: `openai-api-prompting` |
 | ChatGPT Work | `chatgpt-work` | `openai-prompting`、`openai-work` | `one-shot`: `openai-tasks-memory`<br>`persistent-instructions`: `openai-personalize`<br>`skill-instructions`: `openai-skills-plugins`<br>`api`: `openai-api-prompting` |
 | Codex | `codex` | `openai-prompting` | `one-shot`: `openai-best-practices`<br>`persistent-instructions`: `openai-agents-md`、`openai-personalize`、`openai-best-practices`<br>`skill-instructions`: `openai-skills`、`openai-skills-plugins`、`openai-best-practices`<br>`api`: `openai-api-prompting` |
+<!-- generated:routing-openai end -->
 
 ### Anthropic
 
+<!-- generated:routing-anthropic begin (python3 tools/maintain.py docs --write) -->
 | 利用先 | `target_id` | 常に取得 | 条件付き |
 |---|---|---|---|
 | Claude チャット | `claude` | `claude-chat-help` | `one-shot`: `claude-cowork-and-chat`、`claude-custom-visuals`、`claude-chat-prompt-design`、`claude-chat-response-too-brief`<br>`persistent-instructions`: `claude-cowork-and-chat`<br>`skill-instructions`: `claude-skills-best-practices`、`claude-skills-enterprise`<br>`api`: `claude-model-prompting` |
 | Claude Cowork | `claude-cowork` | `claude-cowork-help` | `one-shot`: `claude-cowork-and-chat`、`claude-custom-visuals`、`claude-cowork-computer-use`、`claude-cowork-schedule`<br>`persistent-instructions`: `claude-cowork-and-chat`、`claude-cowork-projects`<br>`skill-instructions`: `claude-skills-best-practices`、`claude-skills-enterprise`<br>`api`: `claude-model-prompting` |
 | Claude Code | `claude-code` | `claude-code-best-practices` | `one-shot`: `claude-code-prompt-library`、`claude-context-claude-md`<br>`persistent-instructions`: `claude-code-memory`、`claude-code-scheduled-tasks`<br>`skill-instructions`: `claude-code-skills`、`claude-skills-best-practices`、`claude-skills-enterprise`<br>`api`: `claude-model-prompting` |
+<!-- generated:routing-anthropic end -->
 
 ### Google
 
+<!-- generated:routing-google begin (python3 tools/maintain.py docs --write) -->
 | 利用先 | `target_id` | 常に取得 | 条件付き |
 |---|---|---|---|
-| Gemini Apps(通常・Gems・Apps skill) | `gemini` | なし | `persistent-instructions` かつ `gems`: `gemini-gems`<br>`skill-instructions`: `gemini-app-skills`<br>`api`: `gemini-api-prompting` |
-| Antigravity | `antigravity` | なし | `one-shot`: `antigravity-cli-best-practices`<br>`persistent-instructions`: `antigravity-rules`、`antigravity-cli-best-practices`<br>`skill-instructions`: `antigravity-skills`<br>`api`: `gemini-api-prompting`(`agent-instruction` のときは、`antigravity-sdk-personas` も) |
+| Gemini Apps(通常・Gems・Apps skill) | `gemini` | なし | `skill-instructions`: `gemini-app-skills`<br>`api`: `gemini-api-prompting`<br>`gems`(`persistent-instructions`): `gemini-gems` |
+| Antigravity | `antigravity` | なし | `one-shot`: `antigravity-cli-best-practices`<br>`persistent-instructions`: `antigravity-rules`、`antigravity-cli-best-practices`<br>`skill-instructions`: `antigravity-skills`<br>`api`(`one-shot`・`persistent-instructions`・`skill-instructions`): `gemini-api-prompting`<br>`api`(`agent-instruction`): `gemini-api-prompting`、`antigravity-sdk-personas` |
 | Gemini Apps の Tasks | `gemini-agent-app` | `gemini-tasks` | `api`: `gemini-api-prompting` |
 | Gemini CLI | `gemini-cli` | `gemini-cli-memory` | `persistent-instructions`: `gemini-cli-memory-tutorial`、`gemini-cli-extension-best-practices`、`gemini-cli-system-prompt`<br>`skill-instructions`: `gemini-cli-skills`、`gemini-cli-skills-best-practices`<br>`api`: `gemini-api-prompting` |
 | Google ADK のエージェント | `google-adk-agent` | `google-adk-instructions` | `api`: `gemini-api-prompting` |
+<!-- generated:routing-google end -->
 
 「Gemini の agent」が Tasks・CLI・ADK のどれか分からないときは、`target_id` を `unresolved` にします。この間は、検証済みの最適化は出ません。
 
@@ -65,6 +71,7 @@
 
 `target_surface` と `model_id` が `unknown` のときの、`official` 規則の件数です。
 
+<!-- generated:rule-counts begin (python3 tools/maintain.py docs --write) -->
 | 利用先 | one-shot | persistent-instructions | skill-instructions | agent-instruction |
 |---|---|---|---|---|
 | ChatGPT Chat | 4 | 1 | 2 | 0 |
@@ -78,6 +85,7 @@
 | Gemini Apps の Tasks | 2 | 0 | 0 | 0 |
 | Gemini CLI | 0 | 4 | 2 | 0 |
 | Google ADK | 0 | 0 | 0 | 4 |
+<!-- generated:rule-counts end -->
 
 - `0`: 資料は取得されますが、その `purpose` に使える規則がありません。`official` の変更は作れず、変更は `editorial` か `inference` になります。
 - `資料なし`: 取得される資料がありません。`fetch` は 0 で終わり、`verify` が `no_applicable_official_source` で `INCOMPLETE` にします。
@@ -95,16 +103,18 @@
 
 モデルを限定した規則は 33 件です。`target_surface` が `api` で、`model_id` が規則の `models` に含まれるときだけ使えます。他のモデルと `unknown` では、使われません。モデルを限定した資料(モデル別ガイド)も、同じ条件でだけ取得されます。
 
+<!-- generated:model-guides begin (python3 tools/maintain.py docs --write) -->
 | `model_id` | 取得される、モデル別ガイド | 使える規則 |
 |---|---|---|
 | `claude-fable-5` | `claude-prompting-fable-5` | 4 件 |
 | `claude-fable-5-1` | `claude-prompting-fable-5-1` | 5 件(`claude-api-clear-direct` を含む) |
+| `claude-haiku-5-5` | `claude-prompting-haiku-5-5` | 4 件(`claude-api-clear-direct` を含む) |
 | `claude-opus-4-8` | `claude-prompting-opus-4-8` | 4 件 |
 | `claude-opus-5` | `claude-prompting-opus-5` | 4 件 |
 | `claude-opus-5-5` | `claude-prompting-opus-5-5` | 5 件(`claude-api-clear-direct` を含む) |
 | `claude-sonnet-5` | `claude-prompting-sonnet-5` | 4 件 |
 | `claude-sonnet-5-5` | `claude-prompting-sonnet-5-5` | 6 件(`claude-api-clear-direct` を含む) |
-| `claude-haiku-5-5` | `claude-prompting-haiku-5-5` | 4 件(`claude-api-clear-direct` を含む) |
+<!-- generated:model-guides end -->
 
 - 件数は、`purpose` を問わない合計です。`purpose` によって、使える規則は変わります。
 - `claude-api-clear-direct` は、全モデル共通の資料 `claude-model-prompting` の規則で、上の 4 つのモデルにだけ付いています。
@@ -117,7 +127,7 @@
 - Claude チャット・Claude Cowork: 全会話に適用する好みの指示は、`claude-cowork-and-chat` の規則で扱います。Cowork のプロジェクトの指示は、`claude-cowork-projects` の規則です。`agent-instruction` に使える規則は、`api` とモデルを指定したときの、モデルを限定した規則だけです。
 - Claude Code: `claude-code-verification` だけが、4 つの `purpose` すべてに使えます。CLAUDE.md は `persistent-instructions`、スキルは `skill-instructions` で扱います。それぞれ専用の資料と規則があります。
 - Gemini Apps: `one-shot` 用の資料はありません。Gems の常設指示は、`target_surface` を `gems` にします。
-- Antigravity: `one-shot` 用の資料は、`antigravity-cli-best-practices` だけです(規則 2 件)。Antigravity CLI での実測は [antigravity.md](antigravity.md) にあります。
+- Antigravity: `one-shot` 用の資料は、`antigravity-cli-best-practices` だけです。Antigravity CLI での実測は [antigravity.md](antigravity.md) にあります。
 - Gemini CLI: `GEMINI.md` などの常設指示と、スキルが対象です。`one-shot` では、`official` の根拠は付きません。
 - Google ADK: `agent-instruction` だけが対象です。
 
