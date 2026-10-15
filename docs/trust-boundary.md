@@ -28,6 +28,7 @@
 - DNS に残るリスクがあります。接続前に、名前解決結果(IPv4/IPv6 すべて)を検査します。ただし、検査と実接続は別々の名前解決で、敵対的な DNS(DNS rebinding)を完全には防げません。
 - プロキシ経由でローカルの名前解決ができない環境では、解決をプロキシに委ねます(`dns_delegated_to_proxy`)。
 - リダイレクトは自動追跡しません。各 hop の接続前に、登録 URL と照合します(最大 5 hop、timeout 15 秒、応答 5 MiB)。
+- サーバーが求めていないのに gzip で返した応答(antigravity.google が、1 割ほどの応答でそうします)は、展開して読みます。展開後も 5 MiB が上限で、超えると `response_too_large` です。`br` など読めない圧縮と、壊れた・途中で切れた gzip は、`blocked`(`unsupported_content_encoding` / `bad_content_encoding`)です。
 - 新しい依存パッケージ、グローバル設定、hook、自動適用はありません。
 - 保守用の `tools/maintain.py` は、registry か `tools/discovery.json` にあるホストの、https のページだけを取得します。registry は書き換えません。`discover` が挙げる候補と、`propose` が作る登録案は、公式であることも、規則の審査も保証しません。
 - 週次の GitHub Actions(`watch.yml`)が書くのは、このリポジトリの Issue だけです。`drift` / `discover` の結果を、ラベル付きの 1 件の Issue に置きます。

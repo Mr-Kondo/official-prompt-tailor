@@ -5,6 +5,7 @@ an independent read observation, a semantic review or a performance gain happene
 Run: python3 -m unittest discover -s tests -p 'test_official_prompt_tailor.py'
 """
 import contextlib
+import gzip
 import hashlib
 import http.client
 import io
@@ -28,6 +29,7 @@ import evidence as ev  # noqa: E402
 
 FIX = ROOT / "tests" / "fixtures" / "official_prompt_tailor"
 REAL_CHECK_HOST = ev.check_host_public
+REAL_HTTP_GET = ev.http_get
 A_URL, MD_URL, API_URL = "https://docs.example.com/guide", "https://docs.example.com/guide.md", "https://api.example.com/prompting"
 HTML = {"content-type": "text/html; charset=utf-8"}
 ORIGINAL = "バグを直して。公開APIは変更しない。テストはpytestで。\n"
@@ -361,6 +363,61 @@ class TestUrlAndConnection(Base):
                 code, acq = self.fetch(f"run-{name}")
                 self.assertEqual((code, acq["sources"][0]["status"]), (2, "blocked"))
                 self.assertTrue(acq["sources"][0]["error"].startswith("network_error"))
+
+    def real_get(self, status, headers, body):
+        """The real http_get, with the connection replaced by one canned answer."""
+        class Answer:
+            def __init__(self):
+                self.status, self.headers = status, headers
+
+            def read(self, n=-1):
+                return body[:n]
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+        opener = mock.Mock(open=lambda req, timeout=None: Answer())
+        with mock.patch("urllib.request.build_opener", return_value=opener):
+            return REAL_HTTP_GET(A_URL)
+
+    def test_gzip_answer_is_unpacked_to_the_same_page(self):
+        # 2026-10-15: antigravity.google answered 1 request in 10 with gzip bytes and "Content-Encoding: gzip", unasked;
+        # the unpacked page must be what the plain answer is, or the body hash and the extraction both go wrong
+        status, _, body = self.real_get(200, {"Content-Type": "text/html", "Content-Encoding": "gzip"}, gzip.compress(self.page))
+        self.assertEqual((status, body), (200, self.page))
+        src = self.source()
+        self.assertEqual(ev.process_body(src, body, HTML["content-type"]), ev.process_body(src, self.page, HTML["content-type"]))
+
+    def test_content_encodings_that_cannot_be_read_are_blocked_with_their_own_code(self):
+        packed = gzip.compress(self.page)
+        for name, coding, data, code in (("brotli", "br", b"\x8b\x02", "unsupported_content_encoding"),
+                                         ("not gzip", "gzip", b"plain text", "bad_content_encoding"),
+                                         ("cut short", "gzip", packed[:len(packed) // 2], "bad_content_encoding")):
+            with self.subTest(name), self.assertRaises(ev.Blocked) as cm:
+                self.real_get(200, {"Content-Encoding": coding}, data)
+            self.assertEqual(cm.exception.code, code)
+        for coding in (None, "", "identity"):
+            with self.subTest(coding=coding):
+                headers = {} if coding is None else {"Content-Encoding": coding}
+                self.assertEqual(self.real_get(200, headers, self.page)[2], self.page)
+
+    def test_an_error_page_keeps_its_status_whatever_its_encoding(self):
+        status, _, body = self.real_get(503, {"Content-Encoding": "gzip"}, b"half a gzip stream")
+        self.assertEqual((status, body), (503, b"half a gzip stream"))
+        self.responses[A_URL] = (status, HTML, body)
+        code, acq = self.fetch()
+        self.assertEqual((code, acq["sources"][0]["error"]), (2, "http_503"))
+
+    def test_a_gzip_bomb_is_refused_as_too_large(self):
+        bomb = gzip.compress(b"a" * 4000)
+        with mock.patch.object(ev, "MAX_BYTES", 1000):
+            unpacked = ev.decode_content({"content-encoding": "gzip"}, bomb)
+            self.responses[A_URL] = (200, HTML, unpacked)
+            code, acq = self.fetch()
+        self.assertEqual(len(unpacked), 1001)  # stopped at the limit, not unpacked in full
+        self.assertEqual((code, acq["sources"][0]["error"]), (2, "response_too_large"))
 
     def test_oversize_response_is_blocked_and_not_saved(self):
         self.responses[A_URL] = (200, HTML, b"x" * 2000)

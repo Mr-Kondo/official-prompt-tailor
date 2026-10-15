@@ -22,6 +22,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import zlib
 from collections import namedtuple
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -229,6 +230,25 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+def decode_content(headers, raw):
+    """Undo the gzip a server may apply on its own: antigravity.google does for 1 answer in 10 or so, whatever the request
+    asks for, and urllib does not unpack it. The result is capped at MAX_BYTES + 1 like any body, so an oversized or
+    bomb-like answer is refused later as response_too_large."""
+    coding = headers.get("content-encoding", "").strip().lower()
+    if coding in ("", "identity"):
+        return raw
+    if coding not in ("gzip", "x-gzip"):
+        raise Blocked("unsupported_content_encoding")
+    unpacker = zlib.decompressobj(16 + zlib.MAX_WBITS)
+    try:
+        body = unpacker.decompress(raw, MAX_BYTES + 1)
+    except zlib.error:
+        raise Blocked("bad_content_encoding")
+    if len(body) <= MAX_BYTES and not unpacker.eof:
+        raise Blocked("bad_content_encoding")  # the stream stopped before its end
+    return body
+
+
 def http_get(url):
     """One request, redirects not followed. Returns (status, lower-cased headers, body<=MAX_BYTES+1)."""
     req = urllib.request.Request(url, headers={"User-Agent": "official-prompt-tailor/1",
@@ -239,7 +259,9 @@ def http_get(url):
         r = e
     with r:
         status = getattr(r, "status", None) or r.code
-        return status, {k.lower(): v for k, v in r.headers.items()}, r.read(MAX_BYTES + 1)
+        headers, raw = {k.lower(): v for k, v in r.headers.items()}, r.read(MAX_BYTES + 1)
+    # only an answer that will be read as a page is unpacked; an error page keeps its status code whatever its bytes are
+    return status, headers, decode_content(headers, raw) if status == 200 else raw
 
 
 # ---------------------------------------------------------------- body extraction
