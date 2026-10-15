@@ -9,8 +9,10 @@
    - `source_excerpt` が本文に残り、意味・適用範囲(`surfaces` / `models` / `purposes`)が変わっていないかを確認する。
    - `source_body_sha256`(= `acquisition.json` の `body_sha256`)、`reviewed_at`、`reviewer_id` を更新する。
    - 本文が変わると、旧審査は引き継がれず `rereview_pending` になります。
+   - 旧本文との差分で、変わった所が引用の前後に及ぶかを確かめる。旧本文は、記録した `source_body_sha256` と同じ SHA-256 の `body.txt`(過去の run の `snapshots/<id>/` など)を探すと、見つかることがあります。見つからないときは、新しい本文で引用の前後を読んで判断します。資料の全文はコミットしません(著作権)。
+   - 見出しが変わって `locators_missing` になったときは、`body_locators` を新しい見出しに直します(2026-10-16 の `antigravity-cli-best-practices` が、この例です)。
 3. 実行中に、allowlist・scope・規則を緩めて合格させない。registry の SHA-256 は acquisition と verification に記録され、取得後に registry が変わると `FAIL` です。
-4. 規則の審査は、これまですべて実行主体(Claude Code, claude-sonnet-5-5)が、取得本文と照合して行いました。初期の 34 件は実装時、追加の 70 件(2026-10-15 に、候補 59 件のうち 31 資料から採用した分)は採用時です。人による審査ではありません(`reviewer_id` に明記)。人が確認した場合だけ、`reviewer_id` を `human:<名前か役割>` にしてください。`rules` と `sources` は、`human:` で始まる `reviewer_id` だけを人の審査として数えます(`human:` のあとが空だと、registry の検査が拒否します)。`tests/test_official_prompt_tailor.py` の `test_no_rule_claims_a_human_review_that_nobody_has_made` は、エージェントが自分で人の審査を書くのを防ぐ番人です。人が実際に審査したときは、その規則に合わせて、このテストを直します。
+4. 規則の審査は、これまですべて実行主体(Claude Code, claude-sonnet-5-5)が、取得本文と照合して行いました。初期の 34 件は実装時、追加の 70 件(2026-10-15 に、候補 59 件のうち 31 資料から採用した分)は採用時です。このうち 11 件は、資料の本文が変わったため、2026-10-16 に再審査しました(`reviewer_id` は `agent re-review`。旧本文との差分で、引用とその前後が変わっていないことを確かめました)。人による審査ではありません(`reviewer_id` に明記)。人が確認した場合だけ、`reviewer_id` を `human:<名前か役割>` にしてください。`rules` と `sources` は、`human:` で始まる `reviewer_id` だけを人の審査として数えます(`human:` のあとが空だと、registry の検査が拒否します)。`tests/test_official_prompt_tailor.py` の `test_no_rule_claims_a_human_review_that_nobody_has_made` は、エージェントが自分で人の審査を書くのを防ぐ番人です。人が実際に審査したときは、その規則に合わせて、このテストを直します。
 
 ### 移転の確認(2026-10-14)
 
