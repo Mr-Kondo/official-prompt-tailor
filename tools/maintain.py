@@ -14,6 +14,7 @@ edit registry.json, and only adopt and rereview with --write: which rules a page
 the spec (docs/maintenance.md); adopt checks the spec against the live page and records who reviewed. Standard library only.
 """
 import argparse
+import contextlib
 import difflib
 import html
 import itertools
@@ -108,12 +109,24 @@ def candidates(index, default_keywords, pages, skip_keys):
     return found
 
 
+@contextlib.contextmanager
+def response_limit(size):
+    """ev.fetch_live refuses an answer over ev.MAX_BYTES (5 MB), which is right for a page. A sitemap of a big site is larger (18.7 MB for
+    ai.google.dev, 2026-10), so it is read under a higher limit, for the length of the one call."""
+    old, ev.MAX_BYTES = ev.MAX_BYTES, size
+    try:
+        yield
+    finally:
+        ev.MAX_BYTES = old
+
+
 def fetch_index(index, tmp, process=None):
     """(entry, the index's text or None): an llms.txt, or with `process` (sitemap_body) a sitemap. A failed answer is looked at once more, as
     drift does: one answer can be a dropped connection or a CDN node mid-deploy. Each look gets its own directory because fetch_live never
     overwrites a snapshot. A refusal (HTTP 403, a bot check) is reported as it is: nothing here tries to get past it."""
     for look in ("look-1", "look-2"):
-        e = ev.fetch_live(index_source(index), tmp / look, process)
+        with response_limit(SITEMAP_MAX_BYTES) if process else contextlib.nullcontext():
+            e = ev.fetch_live(index_source(index), tmp / look, process)
         if e["status"] == "live":
             return e, ev.read_text(tmp / look / e["body_path"])
         if look == "look-1":
@@ -125,6 +138,7 @@ def fetch_index(index, tmp, process=None):
 SITEMAP_TYPES = ("application/xml", "text/xml", "text/plain")
 SITEMAP_LOC = re.compile(r"<loc>\s*([^<]*?)\s*</loc>", re.I)
 MAX_CHILD_SITEMAPS = 30  # child sitemaps read per index; more are reported, not read
+SITEMAP_MAX_BYTES = 40 * 1024 * 1024  # one sitemap answer; a site's page limit for a sitemap is 50 MB uncompressed
 
 
 def sitemap_body(src, raw, content_type):
@@ -160,7 +174,9 @@ def sitemap_pages(index, locs):
     for url in locs:
         key = page_key(url)
         if urllib.parse.urlsplit(url).scheme in ("http", "https") and key.split("/", 1)[0] == host:
-            pages.setdefault(key, (re.sub(r"[-_]+", " ", urllib.parse.unquote(key.rsplit("/", 1)[-1])), re.sub(r"^http://", "https://", url)))
+            known = pages.get(key)
+            if known is None or ("?" in known[1] and "?" not in url):  # one page in many languages (?hl=de): the plain address stands for it
+                pages[key] = (re.sub(r"[-_]+", " ", urllib.parse.unquote(key.rsplit("/", 1)[-1])), re.sub(r"^http://", "https://", url))
     return pages
 
 

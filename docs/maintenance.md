@@ -111,11 +111,11 @@ python3 tools/maintain.py discover
 `developers.openai.com` と `ai.google.dev` には `llms.txt` がないので、`sitemap.xml` から新しいページを探します。
 
 - `<urlset>` なら、その `<loc>` を、`<sitemapindex>` なら、`<loc>` が指す子の sitemap(同じホストの https のものだけ、最大 30 件)を読んで、`<loc>` を集めます。ほかのホストの子は読まず、`skipped` に残します。子の中の索引は、たどりません。
-- sitemap にはページの題がないので、パスの最後の部分(`prompt-engineering` → `prompt engineering`)を題の代わりにします。`keywords`・`exclude` は、題とパスに当てます。言語ごとのページが並ぶサイトでは、`scope` と `exclude` で絞ってください。
-- XML は構文解析せず、`<loc>` の中身だけを取り出します。DOCTYPE や実体参照は展開しません。内容の種類は `application/xml`・`text/xml`・`text/plain`、文字コードは UTF-8 だけです。gzip は読めません。1 つの応答は 5 MB までです(`support.claude.com` の sitemap は、これを超えて読めませんでした)。
+- sitemap にはページの題がないので、パスの最後の部分(`prompt-engineering` → `prompt engineering`)を題の代わりにします。`keywords`・`exclude` は、題とパスに当てます。同じページが言語ごとに `?hl=de` のようなクエリ付きで並ぶサイトでは、クエリを除いた同じページを 1 件にまとめ、クエリのない住所があればそれを使います。
+- XML は構文解析せず、`<loc>` の中身だけを取り出します。DOCTYPE や実体参照は展開しません。内容の種類は `application/xml`・`text/xml`・`text/plain`、文字コードは UTF-8 だけです。gzip は読めません。1 つの応答は 40 MB までです(`SITEMAP_MAX_BYTES`)。ページの 5 MB より大きいのは、`ai.google.dev` の sitemap が 18.7 MB あるためで、この上限は sitemap を読む間だけ使います。
 - 読めなかった子がある一覧は、`status` が `partial` で、`error` に子の URL と理由が出ます。読めたページの候補は、そのまま出ます。候補がなく、`partial` か `blocked` の一覧があるときは `INCOMPLETE` です。
 - **403 などの拒否は、そのまま報告します。** 取得し直すのは、`llms.txt` と同じく 1 回だけで、同じ URL に同じ方法です。ボット検査を避ける工夫はしません。拒否される時間帯は、`INCOMPLETE` のまま残ります。
-- 2026-10-15 の時点で、`openai-developers-sitemap` と `gemini-api-sitemap` の URL(`/sitemap.xml`)と `scope` は、登録時の推定です。この 2 つのホストには、実行環境のネットワーク許可がなく、取得を確かめていません。初回は手元で `discover` を実行し、`status` と `pages` を見て、`scope` を直してください。`platform.claude.com` と `code.claude.com` の `sitemap.xml` では、読取りを確かめました(それぞれ 3,937 件、2,713 件)。
+- 2026-10-15 に、GitHub Actions の `watch` を手動実行して、実機で確かめました。`developers.openai.com` の sitemap は `robots.txt` が示す `/sitemap-index.xml` で(`/sitemap.xml` は 404)、`ai.google.dev` の子 sitemap は 18.7 MB、6,900 件のうち 4,541 件が `/gemini-api/docs/` 以下でした(大半が `?hl=` の言語違い)。登録の URL と上限は、これに合わせて直しました。`platform.claude.com` と `code.claude.com` の `sitemap.xml` では、読取りを確かめました(それぞれ 3,937 件、2,713 件)。
 
 ### 登録案を作る
 

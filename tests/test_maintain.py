@@ -223,6 +223,25 @@ class TestDiscover(MaintainBase):
         self.assertIn("4 child sitemaps beyond the first 30 were not read", row["error"])
         self.assertEqual(len(set(self.calls) - {SITEMAP_URL}), maintain.MAX_CHILD_SITEMAPS)
 
+    def test_a_sitemap_over_the_page_limit_is_read_under_its_own_limit_and_the_limit_is_put_back(self):
+        self.sitemap_config()
+        big = "<urlset><!--" + "x" * (ev.MAX_BYTES + 1000) + "--><url><loc>https://docs.example.com/docs/prompting-big</loc></url></urlset>"
+        self.responses[SITEMAP_URL] = (200, XML, big.encode("utf-8"))
+        before = ev.MAX_BYTES
+        row = json.loads(self.tool("discover")[1])["indexes"][0]
+        self.assertEqual((row["status"], [c["key"] for c in row["candidates"]]), ("live", ["docs.example.com/docs/prompting-big"]))
+        self.assertEqual(ev.MAX_BYTES, before)  # a page is still held to the page limit
+        with mock.patch.object(maintain, "SITEMAP_MAX_BYTES", 1000):
+            row = json.loads(self.tool("discover")[1])["indexes"][0]
+        self.assertEqual((row["status"], row["error"], ev.MAX_BYTES), ("blocked", "response_too_large", before))
+
+    def test_a_page_in_many_languages_is_listed_once_at_its_plain_address(self):
+        self.sitemap_config()
+        langs = ("<urlset>" + "".join(f"<url><loc>https://docs.example.com/docs/prompting-guide{q}</loc></url>" for q in ("?hl=de", "?hl=ko", "", "?hl=ar")) + "</urlset>")
+        self.responses[SITEMAP_URL] = (200, XML, langs.encode("utf-8"))
+        row = json.loads(self.tool("discover")[1])["indexes"][0]
+        self.assertEqual([c["url"] for c in row["candidates"]], ["https://docs.example.com/docs/prompting-guide"])
+
     def test_the_format_of_an_index_is_checked(self):
         self.write_config(indexes=[{"index_id": "example-sitemap", "format": "rss", "url": SITEMAP_URL, "scope": ["/docs/"]}])
         code, _, err = self.tool("discover")
