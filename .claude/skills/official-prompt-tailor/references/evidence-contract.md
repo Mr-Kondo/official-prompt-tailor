@@ -69,7 +69,7 @@ sources --input input.json [--all-models]                                   # �
 sources --run RUN [--host-log LOG]                                          # run の報告
 ```
 
-既定は JSON(標準出力)。`--markdown` は、同じ内容を Markdown にする(スクリプトが組み立てる)。`--run` は、他の指定と一緒には使えない。`--host-log` は `--run` と一緒に使う(契約違反は 1)。
+既定は JSON(標準出力)。`--markdown` は、同じ内容を Markdown にする(スクリプトが組み立てる)。Markdown の先頭の行は、書式の版を示す見えない行(`<!-- sources-report format N -->`)で、そのまま貼る。`--run` は、他の指定と一緒には使えない。`--host-log` は `--run` と一緒に使う(契約違反は 1)。
 
 計画(`mode: plan`):
 - `input`、`registry_sha256`、`selected`(`source_id` `models` `route` = `required` / `conditional`、条件付きなら `purposes` `surfaces`)、`skipped`(選ばれなかった資料と `reason`)、`model`、`--all-models` のときの `models`。

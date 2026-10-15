@@ -198,10 +198,12 @@ python3 tools/maintain.py audit --run outputs/official-prompt-tailor/<run-id> --
 | `answer_matches_the_records` | 3 行が、`verification.json`・`semantic-review.json`(と `semantic-verification.json`)・`evaluation.json` の記録と同じ。記録がないものは「未実施」と読む(`assess` を実行していなければ `NOT_REVIEWED`、`evaluation.json` がなければ `NOT_EVALUATED`) |
 | `no_overclaim` | 採用できない案を「候補」と書き、「検証済み」「改善済み」と言っていない(同じ文の中の否定は除く)。採用できる案でも、実測(`IMPROVED_ON_TEST_SET`)がなければ「改善済み」と言っていない |
 | `copy_prompt_in_answer` | `optimized.md` の本文が、最終回答にそのままある |
-| `sources_report_pasted_as_printed` | `sources --markdown` の出力が、スクリプトが出すとおりに貼ってある(空行の違いは無視) |
+| `sources_report_pasted_as_printed` | `sources --markdown` の出力が、スクリプトが出すとおりに貼ってある(空行と、先頭の書式の版の行の違いは無視)。別の書式の報告は照合できないので `WARN` |
 | `original_literals_kept` | 原文のコマンド・数値・固有名詞(英数字)が、`optimized.md` に残っている(`WARN` のみ) |
 
-`audit` は、改稿の良し悪しを見ません。意味審査と効果測定の代わりにはなりません。`sources_report_pasted_as_printed` は、いまの `sources --markdown` の書式と比べるので、書式を変えたあとは、古い記録でこの検査だけが失敗します。
+`audit` は、改稿の良し悪しを見ません。意味審査と効果測定の代わりにはなりません。
+
+`sources --markdown` の先頭には、書式の版の行(`<!-- sources-report format N -->`)があります。`sources_report_pasted_as_printed` は、貼られた報告を、いまの書式の出力と比べます。貼られた報告の版が違うとき(版の行がない古い報告は 1 と数えます)は、比べられないので `WARN` にします。書式(文言か並び)を変えるときは、`evidence.py` の `SOURCES_FORMAT` を上げてください。上げないと、同じ版のまま本文が違う報告になり、古い記録が `FAIL` になります。報告が見当たらないときも `FAIL` です。
 
 ## 意味審査
 

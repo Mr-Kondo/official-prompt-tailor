@@ -520,6 +520,19 @@ def squash(text):
     return "\n".join(line.rstrip() for line in ev.norm(text).strip().split("\n") if line.strip())
 
 
+def pasted_report(run, answer):
+    """(PASS | WARN | FAIL, detail): does the answer hold the sources report as the script prints it now? The format-mark line is not
+    compared (a model may drop an invisible line). A report in an older format (a lower mark, or none before the mark existed) cannot be compared."""
+    plain = lambda text: squash(ev.FORMAT_MARK.sub("", text))  # noqa: E731
+    if plain(ev.render_sources(ev.sources_report(run))) in plain(answer):
+        return "PASS", "the answer holds the sources --markdown report as the script prints it"
+    mark = ev.FORMAT_MARK.search(answer)
+    pasted = int(mark.group(1)) if mark else (1 if re.search(r"^# 見た資料: ", answer, re.M) else None)
+    if pasted is not None and pasted != ev.SOURCES_FORMAT:
+        return "WARN", f"the answer holds a report in format {pasted}; the script prints format {ev.SOURCES_FORMAT}, so the two cannot be compared"
+    return "FAIL", "the answer does not hold the sources --markdown report as the script prints it"
+
+
 def audit(run, transcript):
     """Did the agent that made this run follow the skill's procedure and report it honestly? Rule-based, from the run's files and the
     agent's own transcript; what the optimised prompt means is not judged. -> {"verdict": PASS|FAIL, "checks": [{id, status, detail}]}"""
@@ -579,8 +592,8 @@ def audit(run, transcript):
         check("no_overclaim", "候補" in answer and not claims, f"claims: {claims}" if claims else "marked as a candidate, nothing called verified or improved")
     optimized = ev.norm((run / "optimized.md").read_text(encoding="utf-8")).strip() if (run / "optimized.md").is_file() else None
     check("copy_prompt_in_answer", optimized is not None and optimized in ev.norm(answer), "optimized.md appears in the answer as it is")
-    shown = squash(ev.render_sources(ev.sources_report(run)))
-    check("sources_report_pasted_as_printed", shown in squash(answer), "the answer holds the sources --markdown report as the script prints it")
+    status, detail = pasted_report(run, answer)
+    check("sources_report_pasted_as_printed", status == "PASS", detail, level=status)
     original = ev.norm((run / "original.md").read_text(encoding="utf-8")) if (run / "original.md").is_file() else ""
     lost = sorted(t for t in {x.strip("`") for x in LITERAL.findall(original)} if optimized is None or t not in optimized)
     check("original_literals_kept", not lost, f"not in optimized.md: {lost}" if lost else "commands, numbers and names of the original are all kept", level="WARN")

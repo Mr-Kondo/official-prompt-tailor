@@ -1744,6 +1744,12 @@ class TestSourcesPlan(unittest.TestCase):
         text = ev.render_sources(self.plan("codex", "api", "gpt-5"))
         self.assertIn("モデル別の資料がありません。`model_id` を変えても、選ばれる資料は変わりません", text)
 
+    def test_the_markdown_begins_with_the_mark_of_its_format(self):
+        # tools/maintain.py audit reads the mark to tell a report of an older format from an edited one
+        text = ev.render_sources(self.plan())
+        self.assertEqual([int(m) for m in ev.FORMAT_MARK.findall(text)], [ev.SOURCES_FORMAT])
+        self.assertTrue(ev.FORMAT_MARK.match(text))
+
     def test_markdown_says_so_when_no_guide_is_chosen_and_names_each_guide_once(self):
         text = ev.render_sources(self.plan(surface="unknown", model="unknown"))
         self.assertIn("`model_id`=`unknown` で、選ばれたものはありません。", text)

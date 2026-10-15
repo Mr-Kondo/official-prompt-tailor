@@ -529,6 +529,20 @@ class TestAudit(Base):
             with self.subTest(name):
                 self.assertEqual(self.statuses(answer=self.answer(lines=lines))[1]["answer_has_three_lines"], "PASS")
 
+    def test_the_report_of_an_older_format_is_a_warning_and_the_invisible_mark_line_is_not_compared(self):
+        report = ev.render_sources(ev.sources_report(self.run))
+        mark = f"<!-- sources-report format {ev.SOURCES_FORMAT} -->"
+        self.assertTrue(report.startswith(mark))
+        older = report.replace("判定", "結果")  # the wording of an earlier version
+        cases = {"the mark line dropped": (report.replace(mark + "\n", ""), "PASS", "PASS"),
+                 "a lower mark": (older.replace(mark, mark.replace(str(ev.SOURCES_FORMAT), str(ev.SOURCES_FORMAT - 1))), "PASS", "WARN"),
+                 "no mark, as before the mark existed": (older.replace(mark + "\n", ""), "PASS", "WARN"),
+                 "the current mark, the text altered": (older, "FAIL", "FAIL")}
+        for name, (pasted, verdict, status) in cases.items():
+            with self.subTest(name):
+                rep, got = self.statuses(answer=self.answer(report=pasted))
+                self.assertEqual((rep["verdict"], got["sources_report_pasted_as_printed"]), (verdict, status), rep["checks"])
+
     def test_a_missing_record_means_not_done_so_nothing_can_be_claimed_from_it(self):
         # found by the Codex review: with no evaluation.json the effect line used to go unchecked
         (self.run / "evaluation.json").unlink()

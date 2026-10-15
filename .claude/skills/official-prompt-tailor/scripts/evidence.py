@@ -1598,11 +1598,15 @@ def _read_text(r):
             "body_not_verified": "未観測(本文を確認できない)"}.get(r["reason"], "未観測")
 
 
+SOURCES_FORMAT = 2  # raise it whenever render_sources changes its wording or layout: a pasted report is compared only with the same format
+FORMAT_MARK = re.compile(r"<!-- sources-report format (\d+) -->")
+
+
 def render_sources(rep):
-    """The report as Markdown, from the report alone: a script writes it, not a model."""
+    """The report as Markdown, from the report alone: a script writes it, not a model. The first line is an invisible mark of the format."""
     inp, plan = rep["input"], rep["mode"] == "plan"
     order = ("target_id", "target_surface", "model_id", "purpose") + (() if plan else ("execution_host",))
-    out = ["# 見る資料の計画" if plan else f"# 見た資料: {rep['run_id']}", "",
+    out = [f"<!-- sources-report format {SOURCES_FORMAT} -->", "# 見る資料の計画" if plan else f"# 見た資料: {rep['run_id']}", "",
            "- 入力: " + " / ".join(f"{k}=`{inp[k]}`" for k in order)]
     if plan:
         out.append(f"- registry: SHA-256 `{rep['registry_sha256'][:12]}…`。通信せず、registry.json だけから求めました。")
