@@ -1295,11 +1295,16 @@ def parse_antigravity_transcript(path):
         if not isinstance(record, dict) or type(record.get("step_index")) is not int or record["step_index"] <= previous:
             raise ContractError("Antigravity step indices must be strictly increasing integers")
         previous = record["step_index"]
-        if record.get("type") not in ("USER_INPUT", "PLANNER_RESPONSE", "GENERIC") or record.get("status") not in ("DONE", "ERROR"):
+        allowed = ("USER_INPUT", "PLANNER_RESPONSE", "GENERIC") + (("SYSTEM_MESSAGE",) if manifest["cli_version"] == "1.4.0" else ())
+        if record.get("type") not in allowed or record.get("status") not in ("DONE", "ERROR"):
             raise ContractError("unsupported Antigravity record type/status")
+        if record["type"] == "SYSTEM_MESSAGE" and (record.get("source") != "SYSTEM" or record.get("tool_calls") or record["status"] != "DONE"):
+            raise ContractError("invalid Antigravity system message")
     for offset, (_, record) in enumerate(rows):
         if record["type"] == "PLANNER_RESPONSE":
             events.extend(_antigravity_tool_events(record, rows[offset + 1:offset + 2]))
+            if manifest["cli_version"] == "1.4.0":
+                events.extend(_antigravity_batch_reads(record, rows[offset + 1:offset + 1 + len(record.get("tool_calls", []))]))
     return events
 
 
@@ -1328,6 +1333,31 @@ def _antigravity_tool_events(record, following):
         if name != "view_file" or len(calls) != 1 or record.get("truncated_fields") or record["status"] != "DONE":
             continue
         events.extend(_antigravity_read_events(record, following))
+    return events
+
+
+def _antigravity_batch_reads(record, following):
+    """Only the observed pure-read batch: one contiguous, path-bound result per distinct file."""
+    calls = record.get("tool_calls", [])
+    if len(calls) < 2 or len(following) != len(calls) or record["status"] != "DONE" or record.get("truncated_fields"):
+        return []
+    if any(call["name"] != "view_file" for call in calls):
+        return []
+    paths = [call["args"]["AbsolutePath"] for call in calls]
+    if len(set(paths)) != len(paths):
+        return []
+    events = []
+    for index, (path, (_, response)) in enumerate(zip(paths, following)):
+        text = response.get("content")
+        if (response["type"] != "GENERIC" or response["step_index"] != record["step_index"] + index + 1
+                or response["status"] != "DONE" or response.get("error") or response.get("truncated_fields") or not isinstance(text, str)):
+            return []
+        numbered = _antigravity_numbered_output(text, path)
+        if not numbered:
+            return []
+        identity = f"read-{record['step_index']}-{index}"
+        events.extend([{"kind": "use", "seq": record["step_index"], "id": identity, "name": "Read", "input": {"file_path": path}},
+                       {"kind": "result", "seq": response["step_index"], "id": identity, "error": False, "text": numbered}])
     return events
 
 

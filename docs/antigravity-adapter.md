@@ -22,7 +22,7 @@ Use `--cli-version 1.4.0` instead when that exact version produced the log. Run 
 
 ## Audit integration
 
-`maintain.py audit` dispatches the same native tool events and uses `antigravity_transcript_texts` to read user requests and the final planner answer, excluding thinking and tool output. Native `run_command` events supply command evidence; opaque unsupported tools can establish a conservative generation barrier, but cannot stand in for executed commands. Synthetic tests cover the integrated audit; a real complete skill execution remains blocked as described below.
+`maintain.py audit` dispatches the same native tool events and uses `antigravity_transcript_texts` to read user requests and the final planner answer, excluding thinking and tool output. Native `run_command` events supply command evidence; opaque unsupported tools can establish a conservative generation barrier, but cannot stand in for executed commands. Synthetic tests cover the integrated audit; the initial 1.3.5 run was blocked, and the later completed 1.4.0 run is recorded below.
 
 ## Genuine runtime evidence and limit
 
@@ -30,9 +30,19 @@ On 2026-10-17 JST a separate bounded `agy --print` invocation was allowed 45 sec
 
 The adapter parsed that **actual native transcript** and observed lines `[1, 2]` before generation attempt step `3`. The requested generated file does not exist. agy exited `0` and reported `SUCCESS` with `denied_actions`; those outer statuses do not prove tool success. The exact log hash, executable hash, version, conversation ID and measured outcomes are in [the runtime evidence record](../tests/fixtures/antigravity-runtime-probe.json). The raw private transcript is not committed. [The fixture](../tests/fixtures/antigravity-1.3.5.jsonl) is synthetic and follows the observed envelope; it is not represented as the actual transcript.
 
-**Full independent skill execution, `audit` PASS and real `sources --host-log` CONSISTENT remain unverified.** The permission block prevents the required generated run artifacts, although audit dispatch is implemented and tested with synthetic records. Completion of #8's full independent-run acceptance criterion must wait for a permitted runtime and the audit integration. Unit tests and CI cannot substitute for that result.
+**At the initial 1.3.5 verification point, full independent skill execution, `audit` PASS and real `sources --host-log` CONSISTENT were unverified.** The permission block prevents the required generated run artifacts, although audit dispatch is implemented and tested with synthetic records. The later 1.4.0 section records completion of that independent-run criterion in a permitted workspace. Unit tests and CI cannot substitute for that result.
 
 
 ## agy 1.4.0 の追加確認 (2026-10-17 JST)
 
 インストール済みCLIが1.4.0へ更新されたため、別の専用ワークスペースで通常の `--mode accept-edits` による実ログを確認した。2行の読取りと `optimized.md` の作成が成功し、adapterでも生成前の2行を観測した。グローバル権限設定や許可スキップのオプションは変更していない。実ログの形式・版・ハッシュ・観測結果は `tests/fixtures/antigravity-140-runtime-probe.json`、対応する合成fixtureは `tests/fixtures/antigravity-1.4.0.jsonl` に記録した。1.3.5での拒否の記録は当時の結果として保持する。これは限定的なプローブであり、完全なスキル実行の成功を意味しない。
+
+
+### 1.4.0 の純粋な複数読取り
+
+実際の独立実行で、一つのplannerに複数の `view_file` があり、その直後に各ファイルのGENERIC応答が連続する形式を確認した。1.4.0だけで、全呼出しが読取り・要求パスが重複しない・応答数と順序が一致する・各出力のファイル名が要求パスに一致する場合に限って観測する。一つでも失敗・切り詰め・パス違いがあればバッチ全体を数えない。書込みとの混在と同一ファイルの複数窓は未対応のまま。1.3.5は従来どおり単一読取りだけを扱う。
+
+
+## 通し実行の完了 (2026-10-17 JST)
+
+1.4.0の通常ワークスペースで、参照検証PASS_LIVE・資料報告CONSISTENT・監査15/15 PASSまで確認した。上記の1.3.5時点の未達事項は過去の記録で、現在の完了結果は [independent-runs.md](independent-runs.md) の1.4.0節を参照。再開時のSYSTEM_MESSAGEは1.4.0でsource=SYSTEM・status=DONE・ツール呼出しなしの場合のみ受理し、読取り・コマンド証拠として数えない。
