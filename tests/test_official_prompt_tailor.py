@@ -2315,6 +2315,93 @@ class TestInstall(unittest.TestCase):
         self.assertEqual(self.install("--plugin", str(dry), "--dry-run").returncode, 0)
         self.assertEqual(list(dry.iterdir()), [])
 
+    def skill_dir(self):
+        return self.proj / ".claude" / "skills" / "official-prompt-tailor"
+
+    def backups(self):
+        return sorted(p.name for p in (self.proj / ".claude").glob("official-prompt-tailor.bak-*"))
+
+    def test_update_installs_when_absent_does_nothing_when_current_and_replaces_when_changed(self):
+        r = self.install("--update", "--project", str(self.proj))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("not installed yet, installing", r.stdout)
+        self.assertTrue((self.skill_dir() / "SKILL.md").is_file())
+        r = self.install("--update", "--project", str(self.proj))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("up to date", r.stdout)
+        self.assertEqual(self.backups(), [])  # nothing to replace: no backup is made
+        (self.skill_dir() / "SKILL.md").write_text("---\nname: official-prompt-tailor\n---\nold\n", encoding="utf-8")  # an older copy
+        r = self.install("--update", "--project", str(self.proj))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("updated:", r.stdout)
+        self.assertEqual((self.skill_dir() / "SKILL.md").read_bytes(), (ROOT / ".claude/skills/official-prompt-tailor/SKILL.md").read_bytes())
+        self.assertEqual(len(self.backups()), 1)  # the old copy is kept, as with --force
+        self.assertIn("old", (self.proj / ".claude" / self.backups()[0] / "SKILL.md").read_text(encoding="utf-8"))
+
+    def test_update_notices_a_file_added_or_removed_and_not_only_a_changed_one(self):
+        self.install("--update", "--project", str(self.proj))
+        (self.skill_dir() / "references" / "review-rubric.md").unlink()
+        self.assertIn("updated:", self.install("--update", "--project", str(self.proj)).stdout)
+        (self.skill_dir() / "extra.txt").write_text("x", encoding="utf-8")
+        self.assertIn("updated:", self.install("--update", "--project", str(self.proj)).stdout)
+        self.assertFalse((self.skill_dir() / "extra.txt").exists())
+        self.assertEqual(len(self.backups()), 2)
+
+    def test_update_leaves_alone_what_it_does_not_recognise_but_force_still_replaces_it(self):
+        other = self.skill_dir()
+        other.mkdir(parents=True)
+        (other / "SKILL.md").write_text("---\nname: something-else\n---\n", encoding="utf-8")
+        r = self.install("--update", "--project", str(self.proj))
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("not recognised", r.stderr)
+        self.assertIn("something-else", (other / "SKILL.md").read_text(encoding="utf-8"))
+        self.assertEqual(self.backups(), [])
+        self.assertEqual(self.install("--force", "--project", str(self.proj)).returncode, 0)  # --force is as it was
+        self.assertEqual(len(self.backups()), 1)
+        r = self.install("--project", str(self.proj))  # a plain install still stops, and now names both ways
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("--update", r.stderr)
+
+    def test_update_works_for_every_product_and_for_a_dry_run(self):
+        for target, rel in (("codex", ".agents/skills"), ("antigravity", ".gemini/config/skills"), ("antigravity-cli", ".gemini/antigravity-cli/skills")):
+            with self.subTest(target):
+                self.assertEqual(self.install("--update", "--user", "--target", target).returncode, 0)
+                dest = self.home / rel / "official-prompt-tailor"
+                self.assertTrue((dest / "SKILL.md").is_file())
+                self.assertIn("up to date", self.install("--update", "--user", "--target", target).stdout)
+                (dest / "SKILL.md").write_text("---\nname: official-prompt-tailor\n---\nold\n", encoding="utf-8")
+                r = self.install("--update", "--user", "--target", target, "--dry-run")
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertIn("nothing was changed", r.stdout)
+                self.assertIn("old", (dest / "SKILL.md").read_text(encoding="utf-8"))
+                self.assertEqual(self.install("--update", "--user", "--target", target).returncode, 0)
+                self.assertNotIn("old", (dest / "SKILL.md").read_text(encoding="utf-8"))
+
+    def test_update_does_not_combine_with_uninstall_and_a_zip_is_made_again(self):
+        self.assertEqual(self.install("--update", "--uninstall", "--project", str(self.proj)).returncode, 1)
+        out = self.tmp / "out"
+        out.mkdir()
+        self.assertEqual(self.install("--update", "--zip", str(out)).returncode, 0)
+        self.assertEqual(self.install("--update", "--zip", str(out)).returncode, 0)  # a ZIP is a build output: no "already exists"
+        self.assertEqual(len(list(out.glob("official-prompt-tailor.zip.bak-*"))), 1)
+
+    def test_update_of_a_plugin_follows_the_same_rules(self):
+        out = self.tmp / "plug"
+        out.mkdir()
+        self.assertIn("created", self.install("--update", "--plugin", str(out)).stdout)
+        self.assertIn("up to date", self.install("--update", "--plugin", str(out)).stdout)
+        manifest = out / "official-prompt-tailor" / ".codex-plugin" / "plugin.json"
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        data["version"] = "0.0.1"  # an older plugin
+        manifest.write_text(json.dumps(data), encoding="utf-8")
+        self.assertIn("created", self.install("--update", "--plugin", str(out)).stdout)
+        self.assertNotEqual(json.loads(manifest.read_text(encoding="utf-8"))["version"], "0.0.1")
+        self.assertEqual(len(list(out.glob("official-prompt-tailor.bak-*"))), 1)
+        (out / "official-prompt-tailor" / ".codex-plugin" / "plugin.json").write_text('{"name": "other"}', encoding="utf-8")
+        r = self.install("--update", "--plugin", str(out))
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("not recognised", r.stderr)
+
     def test_uninstall_removes_only_the_copy_and_reports_missing_ones(self):
         self.assertEqual(self.install("--project", str(self.proj)).returncode, 0)
         skills = self.proj / ".claude" / "skills"
