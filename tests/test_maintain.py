@@ -987,6 +987,93 @@ class TestAudit(Base):
                      cmd("sources", " --markdown")]
         self.cmd = cmd
 
+    def test_audit_compares_the_report_with_the_log_used_by_sources(self):
+        path = self.tmp / "logs" / f"audit-{self.n + 1}.jsonl"
+        steps = self.good[:-1] + [("Bash", f"{self.script} sources --run {self.run} --markdown --host-log {path}")]
+        log = self.record(steps=steps, prompt=f"Use this host log: {path}")
+        rows = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+        rows[-1]["message"]["content"][0]["text"] = self.answer(report=ev.render_sources(ev.sources_report(self.run, log)))
+        log.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+        self.assertEqual(maintain.audit(self.run, log)["verdict"], "PASS")
+
+    def test_antigravity_audit_uses_native_tool_events_and_final_text(self):
+        inp = ev.load_json(self.run / "input.json")
+        inp["execution_host"] = "antigravity"
+        ev.write_json(self.run / "input.json", inp)
+        log = self.record()
+        native = []
+        for row in map(json.loads, log.read_text(encoding="utf-8").splitlines()):
+            for block in row["message"]["content"]:
+                record = {"step_index": len(native), "status": "DONE"}
+                if block["type"] == "text":
+                    record.update(type="USER_INPUT" if row["type"] == "user" else "PLANNER_RESPONSE", content=block["text"])
+                elif block["type"] == "tool_use":
+                    inp, name = block["input"], block["name"]
+                    tool, args = ("run_command", {"CommandLine": inp["command"]}) if name == "Bash" else (
+                        ("view_file", {"AbsolutePath": inp["file_path"]}) if name == "Read" else ("write_to_file", {"TargetFile": inp["file_path"]}))
+                    record.update(type="PLANNER_RESPONSE", tool_calls=[{"name": tool, "args": args}])
+                else:
+                    content = block["content"]
+                    if native[-1].get("tool_calls", [{}])[0].get("name") == "view_file":
+                        lines = self.body.read_text(encoding="utf-8").splitlines()
+                        content = f"File Path: `file://{self.body}`\nShowing lines 1 to {len(lines)}\n" + "\n".join(f"{n}: {line}" for n, line in enumerate(lines, 1))
+                    record.update(type="GENERIC", content=content)
+                native.append(record)
+        log.write_text("\n".join(json.dumps(r) for r in native) + "\n", encoding="utf-8")
+        ev.write_json(Path(str(log) + ".version.json"), {"format": ev.LOG_ADAPTERS["antigravity"], "cli_version": "1.3.5", "sha256": ev.sha_file(log)})
+        rep = maintain.audit(self.run, log)
+        self.assertEqual(rep["verdict"], "PASS", rep)
+
+    def codex_record(self, steps=None):
+        old = ev.load_json(self.run / "input.json")
+        old["execution_host"] = "codex"
+        ev.write_json(self.run / "input.json", old)
+        claude = self.record(steps=steps)
+        records = [json.loads(line) for line in claude.read_text(encoding="utf-8").splitlines()]
+        rows = [{"type": "session_meta", "payload": {"cli_version": "0.155.1", "cwd": str(self.tmp)}}]
+        for d in records:
+            for b in d["message"]["content"]:
+                if b["type"] == "tool_use":
+                    arg = b["input"]
+                    command = arg["command"] if "command" in arg else "cat " + Path(arg["file_path"]).as_posix()
+                    if b["name"] == "Write":
+                        command = "python3 gen.py > " + arg["file_path"]
+                    rows.append({"type": "response_item", "payload": {"type": "custom_tool_call", "name": "exec", "call_id": b["id"],
+                                "input": "text(await tools.exec_command({cmd:" + json.dumps(command) + "}));"}})
+                elif b["type"] == "tool_result":
+                    rows.append({"type": "response_item", "payload": {"type": "custom_tool_call_output", "call_id": b["tool_use_id"],
+                                "output": [{"text": "Script completed"}, {"text": b["content"]}]}})
+                elif b["type"] == "text":
+                    rows.append({"type": "response_item", "payload": {"type": "message", "role": d["type"],
+                                "phase": "final_answer" if d["type"] == "assistant" else None,
+                                "content": [{"type": "output_text" if d["type"] == "assistant" else "input_text", "text": b["text"]}]}})
+        claude.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+        return claude
+
+    def test_codex_audit_observes_procedure_and_final_answer(self):
+        log = self.codex_record()
+        rep = maintain.audit(self.run, log)
+        self.assertEqual(rep["verdict"], "PASS", rep)
+
+    def test_audit_refuses_unknown_codex_versions_without_crashing(self):
+        log = self.codex_record()
+        log.write_text(log.read_text(encoding="utf-8").replace("0.155.1", "0.200.0"), encoding="utf-8")
+        rep = maintain.audit(self.run, log)
+        self.assertEqual((rep["verdict"], rep["checks"][0]["id"]), ("FAIL", "host_log_valid"))
+
+    def test_audit_rejects_malformed_codex_message_content(self):
+        for content in (None, [{"type": "input_text", "text": None}]):
+            with self.subTest(content=content):
+                log = self.codex_record()
+                with log.open("a", encoding="utf-8") as stream:
+                    stream.write(json.dumps({"type": "response_item", "payload": {"type": "message", "role": "user", "content": content}}) + "\n")
+                self.assertEqual(maintain.audit(self.run, log)["checks"][0]["id"], "host_log_valid")
+
+    def test_codex_audit_detects_missing_pre_generation_drift(self):
+        log = self.codex_record([step for step in self.good if not (step[0] == "Bash" and " drift " in step[1])])
+        rep = maintain.audit(self.run, log)
+        self.assertIn("drift_before_writing", [c["id"] for c in rep["checks"] if c["status"] == "FAIL"])
+
     def answer(self, lines=("参照検証: INCOMPLETE", "意味審査: NOT_REVIEWED", "効果:     NOT_EVALUATED"), note="この案は候補です。", prompt=None, report=None):
         prompt = (self.run / "optimized.md").read_text(encoding="utf-8") if prompt is None else prompt
         report = ev.render_sources(ev.sources_report(self.run)) if report is None else report

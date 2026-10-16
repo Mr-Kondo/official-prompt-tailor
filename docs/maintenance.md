@@ -255,6 +255,8 @@ python3 .claude/skills/official-prompt-tailor/scripts/evidence.py verify --run o
 python3 tools/maintain.py audit --run outputs/official-prompt-tailor/<run-id> --transcript <記録>
 ```
 
+`audit` は `input.json` の `execution_host` に合わせて Claude Code・Codex・Antigravity のログを解析します。Codex では、`exec` に記録されたコマンドと最終回答を監査し、思考ブロックは読みません。対応する版は [products.md](products.md) を参照してください。
+
 `audit` が確かめるのは、手順を守ったか、最終回答が記録と合っているかです。各検査は `PASS` / `FAIL` / `WARN` / `NA` で、`FAIL` が 1 つでもあれば全体が `FAIL`(終了コード 1)です。
 
 - 最終回答は、記録の最後の assistant の文章です。最終報告を `SubagentHandback` ツールで返すエージェントは、その `message` が最終回答です。

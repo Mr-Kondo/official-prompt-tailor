@@ -960,10 +960,35 @@ NEGATED = re.compile(r"ない|なく|ません|不|未")  # 「検証済みで�
 LITERAL = re.compile(r"`[^`\n]+`|[A-Za-z_][A-Za-z0-9_./:\-]*[A-Za-z0-9_]|\d+(?:\.\d+)*")
 
 
-def transcript_texts(path):
-    """(the first user text, the answer) of a Claude Code transcript's own thread. The answer is the last assistant text, or, for a
-    subagent that hands its report back through the SubagentHandback tool, that report: the tool call is where its answer is."""
+def codex_transcript_texts(rows):
+    prompts, answer = [], ""
+    for _, record in rows:
+        if not isinstance(record, dict) or record.get("type") != "response_item":
+            continue
+        payload = record.get("payload", {})
+        if not isinstance(payload, dict) or payload.get("type") != "message":
+            continue
+        blocks = payload.get("content")
+        if not isinstance(blocks, list):
+            raise ev.ContractError("Codex message content must be a list")
+        texts = [b.get("text") for b in blocks if isinstance(b, dict) and b.get("type") in ("input_text", "output_text")]
+        if any(not isinstance(text, str) for text in texts):
+            raise ev.ContractError("Codex message text must be a string")
+        text = "\n".join(texts)
+        if payload.get("role") == "user":
+            prompts.append(text)
+        elif payload.get("role") == "assistant" and payload.get("phase") == "final_answer":
+            answer = text
+    return "\n".join(prompts), answer
+
+
+def transcript_texts(path, host="claude-code"):
+    """User request and final answer from the host's own transcript, without reasoning blocks."""
     rows, own = ev.read_transcript(path)
+    if host == "codex":
+        return codex_transcript_texts(rows)
+    if host == "antigravity":
+        return ev.antigravity_transcript_texts(path)
     prompt = answer = ""
     handed = False  # once the report is handed back, text after it is not the answer
     for _, d in rows:
@@ -999,11 +1024,11 @@ def squash(text):
     return "\n".join(line.rstrip() for line in ev.norm(text).strip().split("\n") if line.strip())
 
 
-def pasted_report(run, answer):
+def pasted_report(run, answer, host_log=None):
     """(PASS | WARN | FAIL, detail): does the answer hold the sources report as the script prints it now? The format-mark line is not
     compared (a model may drop an invisible line). A report in an older format (a lower mark, or none before the mark existed) cannot be compared."""
     plain = lambda text: squash(ev.FORMAT_MARK.sub("", text))  # noqa: E731
-    if plain(ev.render_sources(ev.sources_report(run))) in plain(answer):
+    if plain(ev.render_sources(ev.sources_report(run, host_log))) in plain(answer):
         return "PASS", "the answer holds the sources --markdown report as the script prints it"
     mark = ev.FORMAT_MARK.search(answer)
     pasted = int(mark.group(1)) if mark else (1 if re.search(r"^# 見た資料: ", answer, re.M) else None)
@@ -1017,7 +1042,18 @@ def audit(run, transcript):
     agent's own transcript; what the optimised prompt means is not judged. -> {"verdict": PASS|FAIL, "checks": [{id, status, detail}]}"""
     run = Path(run)
     seen = ev.sources_report(run, transcript)  # consistency of the run, and the reads the transcript shows
-    events, (prompt, answer) = ev.parse_transcript(transcript), transcript_texts(transcript)
+    host = ev.load_json(run / "input.json")["execution_host"]
+    try:
+        if host not in ev.LOG_ADAPTER_HOSTS:
+            raise ev.ContractError(f"no audit log adapter for {host}")
+        events = ev.parse_host_log(host, transcript)
+        prompt, answer = transcript_texts(transcript, host)
+    except ev.ContractError as error:
+        return {"schema_version": 1, "run_id": run.name, "verdict": "FAIL", "sources_verdict": seen["verdict"],
+                "checks": [{"id": "host_log_valid", "status": "FAIL", "detail": str(error)}]}
+    if host == "codex":
+        events = [dict(e, name="Bash", input={"command": "\n".join(c for c in e["input"]["cmds"] if c)})
+                  if e["kind"] == "use" and e["name"] == "CodexExec" else e for e in events]
     checks = []
 
     def check(cid, ok, detail, level="FAIL"):
@@ -1028,7 +1064,8 @@ def audit(run, transcript):
     gen_paths = [run / "optimized.md", run / "recommendations.json"]
     writes = [e["seq"] for e in events if e["kind"] == "use" and (
         (e["name"] in ("Write", "Edit") and ev._resolves_to(e["input"].get("file_path"), gen_paths))
-        or (e["name"] == "Bash" and any(g.name in str(e["input"].get("command", "")) for g in gen_paths)))]
+        or (e["name"] == "Bash" and any(g.name in str(e["input"].get("command", "")) for g in gen_paths))
+        or (e["name"] == "CodexExec" and any(g.name in e["input"]["script"] for g in gen_paths)))]
     first_write = min(writes) if writes else None
     fetch, drift, rules, verify, sources = (ran(n) for n in ("fetch", "drift", "rules", "verify", "sources"))
     where = f"(record lines: fetch {fetch}, drift {drift}, rules {rules}, first write {first_write}, verify {verify}, sources {sources})"
@@ -1074,7 +1111,9 @@ def audit(run, transcript):
         check("no_overclaim", "候補" in answer and not claims, f"claims: {claims}" if claims else "marked as a candidate, nothing called verified or improved")
     optimized = ev.norm((run / "optimized.md").read_text(encoding="utf-8")).strip() if (run / "optimized.md").is_file() else None
     check("copy_prompt_in_answer", optimized is not None and optimized in ev.norm(answer), "optimized.md appears in the answer as it is")
-    status, detail = pasted_report(run, answer)
+    source_commands = [c for _, c in bash if re.search(r"evidence\.py\s+sources\b", c)]
+    report_log = transcript if source_commands and "--host-log" in source_commands[-1] else None
+    status, detail = pasted_report(run, answer, report_log)
     check("sources_report_pasted_as_printed", status == "PASS", detail, level=status)
     original = ev.norm((run / "original.md").read_text(encoding="utf-8")) if (run / "original.md").is_file() else ""
     lost = sorted(t for t in {x.strip("`") for x in LITERAL.findall(original)} if optimized is None or t not in optimized)

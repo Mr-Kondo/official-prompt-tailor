@@ -92,7 +92,7 @@ python3 <skill-dir>/scripts/evidence.py verify --run outputs/official-prompt-tai
 ```
 
 - `verify` は通信せず、取得済みの snapshot を検査する。契約違反(終了 1)や意味上の矛盾を直せる場合の再審査は最大 2 回。観測不足を作文で埋めない。
-- 読取りの観測は **`execution_host` が `claude-code` または `codex` のときだけ**可能(その製品の記録を読む adapter だけがある。Codex は版(0.155.1・0.162.*)を固定した `codex-rollout-jsonl-v1`)。他のホストでは読取りを観測できず、参照検証は最良でも `INCOMPLETE`(`no_log_adapter_for_host`)。これは仕様で、作文や自己申告で埋めない。
+- 読取りの観測は **`execution_host` が `claude-code`・`codex`・`antigravity` のときだけ**可能(その製品の記録を読む adapter だけがある。Codex は版(0.155.1・0.162.*)を固定した `codex-rollout-jsonl-v1`。Antigravity は `agy 1.3.5` の `antigravity-transcript-jsonl-v1` で、完了したネイティブログに版・ハッシュの sidecar を添える必要がある)。他のホストでは読取りを観測できず、参照検証は最良でも `INCOMPLETE`(`no_log_adapter_for_host`)。これは仕様で、作文や自己申告で埋めない。
 - `--host-log` は **ユーザーまたは独立ランナーが明示した Claude Code のログのパスだけ**を渡す。セッションログを自分で探して渡さない。渡されなければ付けず、読取りは `unavailable` のまま総合 `INCOMPLETE` を受け入れる。ログのない run は、他がすべて PASS でも必ず `INCOMPLETE` になる(仕様)。
 - 意味審査は別処理で行う。`semantic-review.json` の既定は `NOT_REVIEWED`(未実施)で、審査を記録していなければ `assess` は実行せず、`NOT_REVIEWED` と書く。人が審査する場合はその判断を `review_method: human` として記録し、別コンテキストのモデル審査は実行ログのパスがあるときだけ `separate-context` と記録する。審査の自己採点や模擬ログを作らない。記録後に `assess --run <run> --review <run>/semantic-review.json` を実行する。
 - 効果測定は、ユーザーが評価計画・事例・実行結果を用意したときだけ `compare` を実行する。実行しないなら `NOT_EVALUATED`。
