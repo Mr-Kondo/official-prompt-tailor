@@ -14,6 +14,7 @@ import ipaddress
 import json
 import os
 import re
+import shlex
 import socket
 import statistics
 import sys
@@ -32,7 +33,9 @@ REGISTRY_PATH = SKILL_DIR / "references" / "registry.json"
 RUBRIC_PATH = SKILL_DIR / "references" / "review-rubric.md"
 
 HOSTS = ("claude-code", "codex", "chatgpt-work", "antigravity", "claude-cowork")  # products that can run this skill
-LOG_ADAPTER_HOSTS = ("claude-code",)  # hosts whose session logs the read-observation adapter understands
+LOG_ADAPTERS = {"claude-code": "claude-code-transcript-jsonl-v1", "codex": "codex-rollout-jsonl-v1"}  # host -> pinned log format
+LOG_ADAPTER_HOSTS = tuple(LOG_ADAPTERS)  # hosts whose session logs the read-observation adapter understands
+CODEX_CLI_VERSIONS = ("0.155.1", "0.162.")  # the Codex cli_version prefixes codex-rollout-jsonl-v1 was observed on (CLI exec; Desktop)
 TARGET_IDS = ("chatgpt", "chatgpt-work", "codex", "claude", "claude-cowork", "claude-code", "gemini",
               "antigravity", "gemini-agent-app", "gemini-cli", "google-adk-agent")
 PURPOSES = ("one-shot", "persistent-instructions", "skill-instructions", "agent-instruction")
@@ -47,7 +50,6 @@ SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 JUDGMENTS = ("supported", "contradicted", "insufficient")
 CATEGORIES = ("source-support", "scope", "intent-preservation", "unrequested-additions")
-LOG_ADAPTER = "claude-code-transcript-jsonl-v1"
 HUMAN_REVIEWER = "human:"  # a rule's reviewer_id is "human:<name or role>" only when a person reviewed it; nothing else counts
 CHECKS = ("structure", "official_acquisition", "body_integrity", "citation", "scope", "rule_review",
           "change_binding", "read_observation")
@@ -1255,6 +1257,89 @@ def parse_transcript(path):
     return events
 
 
+_JS_CMD = re.compile(r'exec_command\(\{\s*cmd\s*:\s*("(?:[^"\\]|\\.)*")')
+_TRUNCATED = re.compile(r"…\d+ tokens truncated…")
+
+
+def parse_host_log(host, path):
+    return parse_codex_rollout(path) if host == "codex" else parse_transcript(path)
+
+
+def parse_codex_rollout(path):
+    """codex-rollout-jsonl-v1 (session_meta.cli_version 0.155.1 or 0.162.*): one "CodexExec" use per `exec` custom_tool_call (a JS script), and its output.
+    Any other cli_version is refused, not guessed at."""
+    rows, _ = read_transcript(path)
+    meta = rows[0][1] if rows else None
+    info = meta.get("payload") if isinstance(meta, dict) and meta.get("type") == "session_meta" else None
+    if not isinstance(info, dict) or not str(info.get("cli_version", "")).startswith(CODEX_CLI_VERSIONS):
+        raise ContractError(f"not a {LOG_ADAPTERS['codex']} log: the first record must be a session_meta with cli_version {' or '.join(CODEX_CLI_VERSIONS)}*")
+    events = []
+    for seq, d in rows[1:]:
+        q = d.get("payload") if isinstance(d, dict) else None
+        if not isinstance(q, dict):
+            continue
+        if q.get("type") == "custom_tool_call" and q.get("name") == "exec" and isinstance(q.get("input"), str):
+            cmds = []
+            for m in _JS_CMD.findall(q["input"]):
+                try:
+                    cmds.append(json.loads(m))
+                except ValueError:
+                    cmds.append(None)
+            # `script` is kept whole so that a generation write is found even in a command that could not be decoded
+            events.append({"kind": "use", "seq": seq, "id": q.get("call_id"), "name": "CodexExec",
+                           "input": {"script": q["input"], "cmds": cmds, "cwd": info.get("cwd") or ""}})
+        elif q.get("type") == "custom_tool_call_output":
+            items = [x.get("text", "") for x in q.get("output") or [] if isinstance(x, dict)] if isinstance(q.get("output"), list) else []
+            ok = bool(items) and items[0].startswith("Script completed")
+            body, err = "\n".join(items[1:]), not ok
+            try:
+                obj = json.loads(body)
+            except ValueError:
+                obj = None
+            if isinstance(obj, dict):  # text(await tools.exec_command(..)): the result object; any other shape shows nothing
+                body, err = obj["output"] if isinstance(obj.get("output"), str) else "", err or obj.get("exit_code") not in (0, None)
+            events.append({"kind": "result", "seq": seq, "id": q.get("call_id"), "error": err, "text": body})
+    return events
+
+
+def _codex_reads(inp, target):
+    """True when the script is one plain read command (cat/nl/head/tail/sed -n/bat/rtk read) naming target: only then is its output that file's."""
+    if len(inp["cmds"]) != 1 or not isinstance(inp["cmds"][0], str) or inp["script"].count("exec_command") != 1 or re.search(r"[;&|<>`$]", inp["cmds"][0]):
+        return False
+    try:
+        toks = shlex.split(inp["cmds"][0])
+    except ValueError:
+        return False
+    if toks[:2] == ["rtk", "read"] or toks[:1] in (["cat"], ["nl"], ["head"], ["tail"], ["bat"]) or (toks[:2] == ["sed", "-n"]):
+        return any(not t.startswith("-") and _resolves_to(t if os.path.isabs(t) else os.path.join(inp["cwd"], t), [target]) for t in toks[1:])
+    return False
+
+
+def _aligned_lines(text, body_lines):
+    """Body line numbers shown verbatim as a run of lines in text. A line next to a truncation mark is cut, so it is not counted;
+    a run that fits two places in the body is ambiguous, so it is not counted either."""
+    seen, segs = set(), _TRUNCATED.split(text)
+    for si, seg in enumerate(segs):
+        lines = seg.split("\n")
+        lines = lines[1:] if si else lines
+        lines = lines[:-1] if si < len(segs) - 1 or (lines and lines[-1] == "") else lines
+        i = 0
+        while i < len(lines):
+            runs = []
+            for k in range(len(body_lines)):
+                n = 0
+                while i + n < len(lines) and k + n < len(body_lines) and lines[i + n] == body_lines[k + n]:
+                    n += 1
+                if n:
+                    runs.append((n, k))
+            top = max(runs)[0] if runs else 0
+            best = [k for n, k in runs if n == top]
+            if len(best) == 1:
+                seen.update(range(best[0] + 1, best[0] + top + 1))
+            i += max(top, 1)
+    return seen
+
+
 _NUMBERED = re.compile(r"^\s*(\d+)[\t→](.*)$")
 
 
@@ -1263,17 +1348,22 @@ def observed_read_lines(events, body_path, gen_paths):
     target = Path(body_path).resolve()
     gens = [ev["seq"] for ev in events if ev["kind"] == "use" and (
         (ev["name"] in ("Write", "Edit") and _resolves_to(ev["input"].get("file_path"), gen_paths)) or
-        (ev["name"] == "Bash" and any(g.name in str(ev["input"].get("command", "")) for g in gen_paths)))]
+        (ev["name"] == "Bash" and any(g.name in str(ev["input"].get("command", "")) for g in gen_paths)) or
+        (ev["name"] == "CodexExec" and any(g.name in ev["input"]["script"] for g in gen_paths)))]
     gen_seq = min(gens) if gens else None
     body_lines = Path(body_path).read_text(encoding="utf-8").split("\n")[:-1]
     results = {ev["id"]: ev for ev in events if ev["kind"] == "result"}
     seen = set()
     for ev in events:
-        if ev["kind"] != "use" or ev["name"] != "Read" or not _resolves_to(ev["input"].get("file_path"), [target]):
+        if ev["kind"] != "use" or not (
+                (ev["name"] == "Read" and _resolves_to(ev["input"].get("file_path"), [target])) or
+                (ev["name"] == "CodexExec" and _codex_reads(ev["input"], target))):
             continue
         res = results.get(ev["id"])
         if res is None or res["error"] or res["seq"] < ev["seq"] or (gen_seq is not None and res["seq"] > gen_seq):
             continue
+        if ev["name"] == "CodexExec":
+            seen |= _aligned_lines(res["text"], body_lines)
         for ln in res["text"].split("\n"):
             m = _NUMBERED.match(ln)
             if m and 1 <= int(m.group(1)) <= len(body_lines) and body_lines[int(m.group(1)) - 1] == m.group(2):
@@ -1292,7 +1382,7 @@ def _resolves_to(fp, targets):
 
 
 def _check_reads(R, run, rec, acq, bodies, sources_out, host_log, ctx, host):
-    ctx["host_log_sha256"] = None
+    ctx["host_log_sha256"], ctx["host"] = None, host
     if host not in LOG_ADAPTER_HOSTS:  # a log from another product is never parsed or guessed at
         R.inc("read_observation", "no_log_adapter_for_host", f"no read-observation adapter for execution_host {host}")
         return
@@ -1309,7 +1399,7 @@ def _check_reads(R, run, rec, acq, bodies, sources_out, host_log, ctx, host):
             r["read_status"] = "self_reported"
         return
     try:
-        events = parse_transcript(hl)
+        events = parse_host_log(host, hl)
     except ContractError as e:
         R.fail("read_observation", "host_log_invalid", str(e))
         return
@@ -1344,7 +1434,7 @@ def _finish(run, R, mode, ctx, sources_out, now):
                            "Does not establish that a cited excerpt semantically supports a change (see semantic review).",
                            "Does not establish that the optimised prompt performs better (see evaluation).",
                            "Snapshots are re-checkable, not tamper-proof against a user who controls the filesystem.",
-                           f"Host-log adapter {LOG_ADAPTER} trusts the path the operator supplied via --host-log."],
+                           f"Host-log adapter {LOG_ADAPTERS.get(ctx.get('host'), '(none)')} trusts the path the operator supplied via --host-log."],
            "change_counts": ctx.get("counts"), "host_log_sha256": ctx.get("host_log_sha256")}
     write_json(run / "verification.json", rep)
     return rep
@@ -1421,7 +1511,7 @@ def _source_reads(run, host, host_log, rows, rec, problem):
             row["read"] = {"status": "self_reported", "reason": "host_log_inside_run"}
         return log_sha
     try:
-        events = parse_transcript(hl)
+        events = parse_host_log(host, hl)
     except ContractError as e:
         problem("fail", "host_log_invalid", str(e))
         for row in rows:

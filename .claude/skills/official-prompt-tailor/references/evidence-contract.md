@@ -124,7 +124,7 @@ sources --run RUN [--host-log LOG]                                          # ru
 - その結果が `optimized.md` / `recommendations.json` への最初の書込みより前にある。
 - ログが run ディレクトリの外にある。
 
-`execution_host` は `claude-code` / `codex` / `chatgpt-work` / `antigravity` / `claude-cowork`。読取りの adapter があるのは `claude-code` だけで、他のホストでは `no_log_adapter_for_host`(総合 `INCOMPLETE`)になる。ログを渡しても解釈しない。
+`execution_host` は `claude-code` / `codex` / `chatgpt-work` / `antigravity` / `claude-cowork`。読取りの adapter があるのは `claude-code`(`claude-code-transcript-jsonl-v1`)と `codex`(`codex-rollout-jsonl-v1`、`session_meta.cli_version` が `0.155.1` か `0.162.*` のときだけ。ほかの版は `host_log_invalid`)で、他のホストでは `no_log_adapter_for_host`(総合 `INCOMPLETE`)になる。ログを渡しても解釈しない。
 
 信頼境界: ログのパスは運用者が指定する。署名や独立収集元の認証はしない。運用者が独立した収集元を確認できない場合は `--host-log` を付けず、総合 `INCOMPLETE` を受け入れる。
 
