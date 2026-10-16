@@ -987,6 +987,56 @@ class TestAudit(Base):
                      cmd("sources", " --markdown")]
         self.cmd = cmd
 
+    def codex_record(self, steps=None):
+        old = ev.load_json(self.run / "input.json")
+        old["execution_host"] = "codex"
+        ev.write_json(self.run / "input.json", old)
+        claude = self.record(steps=steps)
+        records = [json.loads(line) for line in claude.read_text(encoding="utf-8").splitlines()]
+        rows = [{"type": "session_meta", "payload": {"cli_version": "0.155.1", "cwd": str(self.tmp)}}]
+        for d in records:
+            for b in d["message"]["content"]:
+                if b["type"] == "tool_use":
+                    arg = b["input"]
+                    command = arg.get("command", "cat " + str(arg.get("file_path", "")))
+                    if b["name"] == "Write":
+                        command = "python3 gen.py > " + arg["file_path"]
+                    rows.append({"type": "response_item", "payload": {"type": "custom_tool_call", "name": "exec", "call_id": b["id"],
+                                "input": "text(await tools.exec_command({cmd:" + json.dumps(command) + "}));"}})
+                elif b["type"] == "tool_result":
+                    rows.append({"type": "response_item", "payload": {"type": "custom_tool_call_output", "call_id": b["tool_use_id"],
+                                "output": [{"text": "Script completed"}, {"text": b["content"]}]}})
+                elif b["type"] == "text":
+                    rows.append({"type": "response_item", "payload": {"type": "message", "role": d["type"],
+                                "phase": "final_answer" if d["type"] == "assistant" else None,
+                                "content": [{"type": "output_text" if d["type"] == "assistant" else "input_text", "text": b["text"]}]}})
+        claude.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+        return claude
+
+    def test_codex_audit_observes_procedure_and_final_answer(self):
+        log = self.codex_record()
+        rep = maintain.audit(self.run, log)
+        self.assertEqual(rep["verdict"], "PASS", rep)
+
+    def test_audit_refuses_unknown_codex_versions_without_crashing(self):
+        log = self.codex_record()
+        log.write_text(log.read_text(encoding="utf-8").replace("0.155.1", "0.200.0"), encoding="utf-8")
+        rep = maintain.audit(self.run, log)
+        self.assertEqual((rep["verdict"], rep["checks"][0]["id"]), ("FAIL", "host_log_valid"))
+
+    def test_audit_rejects_malformed_codex_message_content(self):
+        for content in (None, [{"type": "input_text", "text": None}]):
+            with self.subTest(content=content):
+                log = self.codex_record()
+                with log.open("a", encoding="utf-8") as stream:
+                    stream.write(json.dumps({"type": "response_item", "payload": {"type": "message", "role": "user", "content": content}}) + "\n")
+                self.assertEqual(maintain.audit(self.run, log)["checks"][0]["id"], "host_log_valid")
+
+    def test_codex_audit_detects_missing_pre_generation_drift(self):
+        log = self.codex_record([step for step in self.good if not (step[0] == "Bash" and " drift " in step[1])])
+        rep = maintain.audit(self.run, log)
+        self.assertIn("drift_before_writing", [c["id"] for c in rep["checks"] if c["status"] == "FAIL"])
+
     def answer(self, lines=("参照検証: INCOMPLETE", "意味審査: NOT_REVIEWED", "効果:     NOT_EVALUATED"), note="この案は候補です。", prompt=None, report=None):
         prompt = (self.run / "optimized.md").read_text(encoding="utf-8") if prompt is None else prompt
         report = ev.render_sources(ev.sources_report(self.run)) if report is None else report

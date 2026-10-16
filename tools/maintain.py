@@ -960,10 +960,33 @@ NEGATED = re.compile(r"ない|なく|ません|不|未")  # 「検証済みで�
 LITERAL = re.compile(r"`[^`\n]+`|[A-Za-z_][A-Za-z0-9_./:\-]*[A-Za-z0-9_]|\d+(?:\.\d+)*")
 
 
-def transcript_texts(path):
-    """(the first user text, the answer) of a Claude Code transcript's own thread. The answer is the last assistant text, or, for a
-    subagent that hands its report back through the SubagentHandback tool, that report: the tool call is where its answer is."""
+def codex_transcript_texts(rows):
+    prompts, answer = [], ""
+    for _, record in rows:
+        if not isinstance(record, dict) or record.get("type") != "response_item":
+            continue
+        payload = record.get("payload", {})
+        if not isinstance(payload, dict) or payload.get("type") != "message":
+            continue
+        blocks = payload.get("content")
+        if not isinstance(blocks, list):
+            raise ev.ContractError("Codex message content must be a list")
+        texts = [b.get("text") for b in blocks if isinstance(b, dict) and b.get("type") in ("input_text", "output_text")]
+        if any(not isinstance(text, str) for text in texts):
+            raise ev.ContractError("Codex message text must be a string")
+        text = "\n".join(texts)
+        if payload.get("role") == "user":
+            prompts.append(text)
+        elif payload.get("role") == "assistant" and payload.get("phase") == "final_answer":
+            answer = text
+    return "\n".join(prompts), answer
+
+
+def transcript_texts(path, host="claude-code"):
+    """User request and final answer from the host's own transcript, without reasoning blocks."""
     rows, own = ev.read_transcript(path)
+    if host == "codex":
+        return codex_transcript_texts(rows)
     prompt = answer = ""
     handed = False  # once the report is handed back, text after it is not the answer
     for _, d in rows:
@@ -1017,7 +1040,18 @@ def audit(run, transcript):
     agent's own transcript; what the optimised prompt means is not judged. -> {"verdict": PASS|FAIL, "checks": [{id, status, detail}]}"""
     run = Path(run)
     seen = ev.sources_report(run, transcript)  # consistency of the run, and the reads the transcript shows
-    events, (prompt, answer) = ev.parse_transcript(transcript), transcript_texts(transcript)
+    host = ev.load_json(run / "input.json")["execution_host"]
+    try:
+        if host not in ev.LOG_ADAPTER_HOSTS:
+            raise ev.ContractError(f"no audit log adapter for {host}")
+        events = ev.parse_host_log(host, transcript)
+        prompt, answer = transcript_texts(transcript, host)
+    except ev.ContractError as error:
+        return {"schema_version": 1, "run_id": run.name, "verdict": "FAIL", "sources_verdict": seen["verdict"],
+                "checks": [{"id": "host_log_valid", "status": "FAIL", "detail": str(error)}]}
+    if host == "codex":
+        events = [dict(e, name="Bash", input={"command": "\n".join(c for c in e["input"]["cmds"] if c)})
+                  if e["kind"] == "use" and e["name"] == "CodexExec" else e for e in events]
     checks = []
 
     def check(cid, ok, detail, level="FAIL"):
