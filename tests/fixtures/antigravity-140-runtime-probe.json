@@ -1,0 +1,14 @@
+{
+  "cli_version": "1.4.0",
+  "format": "antigravity-transcript-jsonl-v1",
+  "conversation_id": "085d1096-661d-43d0-9453-0a31b30df580",
+  "log_sha256": "874448f2b7350423f0279a5ed1d9995e8e43074ba426d46cee1b1a0cb8c61308",
+  "read_lines": [
+    1,
+    2
+  ],
+  "first_generation_attempt_step": 3,
+  "generated_file_exists": true,
+  "runtime_result_status": "SUCCESS",
+  "full_skill_audit": "NOT_YET_COMPLETED"
+}
