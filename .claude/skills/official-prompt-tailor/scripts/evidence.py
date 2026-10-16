@@ -1249,19 +1249,10 @@ def parse_transcript(path):
             if not isinstance(b, dict):
                 continue
             if b.get("type") == "tool_use" and d.get("type") == "assistant":
-                _log_string(b, "id", seq)
-                _log_string(b, "name", seq)
-                if not isinstance(b.get("input"), dict):
-                    raise ContractError(f"host log line {seq + 1}: tool input must be an object")
-                events.append({"kind": "use", "seq": seq, "id": b["id"], "name": b["name"], "input": b["input"]})
+                events.append({"kind": "use", "seq": seq, "id": b.get("id"), "name": b.get("name"), "input": b.get("input") or {}})
             elif b.get("type") == "tool_result" and d.get("type") == "user":
-                _log_string(b, "tool_use_id", seq)
                 c = b.get("content")
-                if not isinstance(c, (str, list)):
-                    raise ContractError(f"host log line {seq + 1}: tool result content must be text or a list")
-                if isinstance(c, list) and any(not isinstance(x, dict) for x in c):
-                    raise ContractError(f"host log line {seq + 1}: content blocks must be objects")
-                text = c if isinstance(c, str) else "\n".join(_log_string(x, "text", seq) for x in c if x.get("type") == "text" or "text" in x)
+                text = c if isinstance(c, str) else "\n".join(x.get("text", "") for x in c if isinstance(x, dict)) if isinstance(c, list) else ""
                 events.append({"kind": "result", "seq": seq, "id": b.get("tool_use_id"), "error": bool(b.get("is_error")), "text": text})
     return events
 

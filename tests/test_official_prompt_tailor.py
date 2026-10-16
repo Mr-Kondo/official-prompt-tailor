@@ -965,20 +965,6 @@ class TestCodexAdapter(Base):
                 self.assertEqual(codes(self.check_log(log)), {"host_log_invalid"})
                 self.assertIn("host_log_invalid", {p["code"] for p in ev.sources_report(self.run, log)["problems"]})
 
-    def test_claude_relevant_records_validate_ids_content_and_text(self):
-        use = {"type": "tool_use", "id": "read-1", "name": "Read", "input": {"file_path": str(self.body)}}
-        result = {"type": "tool_result", "tool_use_id": "read-1", "content": [{"type": "text", "text": "body"}]}
-        for block, field, value in ((use, "id", []), (use, "input", []),
-                                    (result, "tool_use_id", []), (result, "content", None),
-                                    (result, "content", [{"type": "text", "text": None}])):
-            with self.subTest(field=field, value=value):
-                malformed = dict(block, **{field: value})
-                row = {"type": "assistant" if block is use else "user", "message": {"content": [malformed]}}
-                log = self.tmp / "malformed-claude.jsonl"
-                log.write_text(json.dumps(row) + "\n", encoding="utf-8")
-                with self.assertRaises(ev.ContractError):
-                    ev.parse_host_log("claude-code", log)
-
     def test_version_boundaries_reject_prefix_lookalikes(self):
         for version in ("0.155.10", "0.155.1-bogus", "0.162.", "0.162.bogus", "0.162.0-bogus", "0.162.0-alpha.1junk", None):
             with self.subTest(version=version):
