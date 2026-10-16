@@ -1022,11 +1022,11 @@ def squash(text):
     return "\n".join(line.rstrip() for line in ev.norm(text).strip().split("\n") if line.strip())
 
 
-def pasted_report(run, answer):
+def pasted_report(run, answer, host_log=None):
     """(PASS | WARN | FAIL, detail): does the answer hold the sources report as the script prints it now? The format-mark line is not
     compared (a model may drop an invisible line). A report in an older format (a lower mark, or none before the mark existed) cannot be compared."""
     plain = lambda text: squash(ev.FORMAT_MARK.sub("", text))  # noqa: E731
-    if plain(ev.render_sources(ev.sources_report(run))) in plain(answer):
+    if plain(ev.render_sources(ev.sources_report(run, host_log))) in plain(answer):
         return "PASS", "the answer holds the sources --markdown report as the script prints it"
     mark = ev.FORMAT_MARK.search(answer)
     pasted = int(mark.group(1)) if mark else (1 if re.search(r"^# 見た資料: ", answer, re.M) else None)
@@ -1108,7 +1108,9 @@ def audit(run, transcript):
         check("no_overclaim", "候補" in answer and not claims, f"claims: {claims}" if claims else "marked as a candidate, nothing called verified or improved")
     optimized = ev.norm((run / "optimized.md").read_text(encoding="utf-8")).strip() if (run / "optimized.md").is_file() else None
     check("copy_prompt_in_answer", optimized is not None and optimized in ev.norm(answer), "optimized.md appears in the answer as it is")
-    status, detail = pasted_report(run, answer)
+    source_commands = [c for _, c in bash if re.search(r"evidence\.py\s+sources\b", c)]
+    report_log = transcript if source_commands and "--host-log" in source_commands[-1] else None
+    status, detail = pasted_report(run, answer, report_log)
     check("sources_report_pasted_as_printed", status == "PASS", detail, level=status)
     original = ev.norm((run / "original.md").read_text(encoding="utf-8")) if (run / "original.md").is_file() else ""
     lost = sorted(t for t in {x.strip("`") for x in LITERAL.findall(original)} if optimized is None or t not in optimized)

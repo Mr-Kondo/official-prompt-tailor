@@ -987,6 +987,15 @@ class TestAudit(Base):
                      cmd("sources", " --markdown")]
         self.cmd = cmd
 
+    def test_audit_compares_the_report_with_the_log_used_by_sources(self):
+        path = self.tmp / "logs" / f"audit-{self.n + 1}.jsonl"
+        steps = self.good[:-1] + [("Bash", f"{self.script} sources --run {self.run} --markdown --host-log {path}")]
+        log = self.record(steps=steps, prompt=f"Use this host log: {path}")
+        rows = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+        rows[-1]["message"]["content"][0]["text"] = self.answer(report=ev.render_sources(ev.sources_report(self.run, log)))
+        log.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+        self.assertEqual(maintain.audit(self.run, log)["verdict"], "PASS")
+
     def codex_record(self, steps=None):
         old = ev.load_json(self.run / "input.json")
         old["execution_host"] = "codex"

@@ -145,3 +145,14 @@ v0.3.0 までの実機の確認 3 件は、規則を書いたのと同じエー�
 - 「手順への所見」は、エージェントの自己申告です。`audit` が確かめたものではありません。
 - `audit` は、手順を守ったか、最終回答が記録と合っているかを見ます。改稿の良し悪しは見ません。意味審査と効果測定は、していません。
 - `audit` と、この節の直しは、同じ作者(Claude Code のエージェント)が書きました。同じ思い込みを共有している可能性があります。`audit` の読み違い(上の表の `audit` の 4 行)は、通らなかった記録を見て、または実装中に気づいて直しました。直したあとの `audit` が、そのほかの読み違いを持たないとは言えません。
+
+
+## Codex rollout adapter の独立実行 (2026-10-17 JST)
+
+Issue #9・#12。実行ホスト Codex CLI **0.155.1**、モデル `gpt-6-sol`、利用先 `claude`、purpose `one-shot`。実際の別プロセスで `fetch` → `drift` / `rules` → 全本文の読取り → 改稿 → `verify --host-log` → `sources --markdown --host-log` → 最終回答を実行した。最初の二回はモデル選択で実行できず、成功した回の記録を評価した。
+
+- run: `outputs/official-prompt-tailor/indep-codex-20261017-005512050166` (未追跡)。純正 rollout ID: `01a1456d-e434-71f0-a94f-d1d4d13624aa`。ログや個人情報を含む全文はコミットしない。
+- 5 資料の本文を単一の `rtk proxy cat <絶対パス>` で読み、生成前に **228/228 行**を観測した。内訳: `claude-cowork-and-chat` 135、`claude-custom-visuals` 71、`claude-chat-prompt-design` 5、`claude-chat-response-too-brief` 3、`claude-chat-help` 14 行。
+- 参照検証 **PASS_LIVE**、資料報告 **CONSISTENT**。手順監査 `audit` は **PASS (15/15 項目)**。最終回答に候補プロンプトと実際の資料報告を含む。
+- 実行で、RTK proxy 読取りの未対応、audit の Claude Code 専用解析、ログ付き資料報告をログ無し報告と比較する不具合を発見し、修正後に同じ真正なログ・run で検証をやり直した。成功のためにログを合成・編集していない。
+- 意味審査 **NOT_REVIEWED**、効果 **NOT_EVALUATED**。これは手順と参照の検証であり、改稿の意味の正しさや効果を証明しない。1 回・macOS の結果であり、Windows 実機の Codex 起動は未確認。
