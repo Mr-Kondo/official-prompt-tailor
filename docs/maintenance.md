@@ -69,6 +69,7 @@ python3 tools/maintain.py rereview --run outputs/official-prompt-tailor/<run-id>
 | `class` | 意味 | `--write` |
 |---|---|---|
 | `context_unchanged` | 引用、その前後 5 行(`--context`)、直上の見出し、引用の出現回数が、旧本文と新本文で同じ。資料は別の所が変わった | 審査を更新する |
+| `section_risk` | 引用の前後は同じだが、引用がある節に、「deprecated」「no longer」「非推奨」などの語を含む行が増えた(`added` に出る)。窓の外の変更を見落とさないための検査 | 更新しない。`added` を読んで、`--accept` で更新する |
 | `context_changed` | 前後のどれかが変わった。`diff` に差分を出す | 更新しない。差分を読んで、`--accept <rule_id> --reviewer "…; not human"` で更新するか、規則を直す |
 | `old_body_unavailable` | 旧本文が見つからない | 更新しない(同上) |
 | `excerpt_missing` | 引用が本文から消えた | 更新できない。規則の引用を直す(`--accept` でも拒否します) |

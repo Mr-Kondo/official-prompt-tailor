@@ -55,7 +55,8 @@ def kept_lines(r):
 
 
 REREVIEW_CLASS = {"context_unchanged": "引用とその前後は同じ(機械で更新できる)", "context_changed": "引用の前後が変わった(差分を読む)",
-                  "old_body_unavailable": "旧本文がない(本文を読んで判断する)", "excerpt_missing": "引用が本文から消えた(更新できない)"}
+                  "old_body_unavailable": "旧本文がない(本文を読んで判断する)", "excerpt_missing": "引用が本文から消えた(更新できない)",
+                  "section_risk": "同じ節に、非推奨・廃止などの語を含む行が増えた(読んで判断する)"}
 SHOWN_HUNKS, SHOWN_LINES, WIDTH = 5, 3, 100  # a few lines of what changed, so that the page need not be fetched to judge; not the page
 
 

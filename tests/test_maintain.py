@@ -788,6 +788,17 @@ class TestRereviewJudgement(unittest.TestCase):
         self.assertEqual(self.judge(self.BODY, new, context=1)["class"], "context_unchanged")
         self.assertEqual(self.judge(self.BODY, new, context=3)["class"], "context_changed")
 
+    def test_a_risk_word_added_far_from_the_excerpt_in_its_section_is_not_renewed_mechanically(self):
+        body = "# Style\n\nUse short sentences.\n\n" + "Filler.\n\n" * 8 + "End.\n\n# Other\n\nUnrelated.\n"
+        for added, cls in (("This option is deprecated.", "section_risk"), ("A harmless sentence.", "context_unchanged")):
+            with self.subTest(added):
+                j = self.judge(body, body.replace("End.", added), context=2)
+                self.assertEqual(j["class"], cls)
+        self.assertEqual(j.get("added"), None)
+        j = self.judge(body, body.replace("End.", "No longer supported."), context=2)
+        self.assertEqual(j["added"], ["No longer supported."])
+        self.assertEqual(self.judge(body, body.replace("Unrelated.", "Deprecated."), context=2)["class"], "context_unchanged")  # another section
+
 
 class TestReview(RereviewBase):
     """review is for a person at a terminal: it shows a rule with the page it cites and records a name only when one is typed."""
