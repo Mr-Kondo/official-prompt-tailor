@@ -164,3 +164,27 @@ class TestAntigravityAdapter(Base):
         completed = subprocess.run(command, capture_output=True, text=True, encoding="utf-8")
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(ev.parse_host_log("antigravity", log)[0]["name"], "Read")
+
+    def test_140_distinct_pure_read_batch_requires_ordered_path_bound_results(self):
+        other = self.tmp / "second.txt"
+        baseline = copy.deepcopy(self.rows)
+        calls = copy.deepcopy(baseline[1])
+        calls["tool_calls"].append({"name": "view_file", "args": {"AbsolutePath": str(other)}})
+        second = {"step_index": 3, "type": "GENERIC", "status": "DONE",
+                  "content": f"File Path: `file://{other}`\nShowing lines 1 to 1\n1: second"}
+        write = copy.deepcopy(baseline[3]); write["step_index"] = 4
+        batch = [baseline[0], calls, baseline[2], second, write]
+        for variant in ("valid", "wrong_path", "wrong_order", "duplicate", "failed", "legacy"):
+            with self.subTest(variant=variant):
+                self.rows = copy.deepcopy(batch)
+                if variant == "wrong_path":
+                    self.rows[3]["content"] = self.rows[3]["content"].replace(str(other), "/wrong")
+                elif variant == "wrong_order":
+                    self.rows[2]["content"], self.rows[3]["content"] = self.rows[3]["content"], self.rows[2]["content"]
+                elif variant == "duplicate":
+                    self.rows[1]["tool_calls"][1]["args"]["AbsolutePath"] = str(self.body)
+                elif variant == "failed":
+                    self.rows[3]["status"] = "ERROR"
+                log = self.save("1.3.5" if variant == "legacy" else "1.4.0")
+                seen, _ = ev.observed_read_lines(ev.parse_host_log("antigravity", log), self.body, [self.run / "optimized.md"])
+                self.assertEqual(bool(seen), variant == "valid")
