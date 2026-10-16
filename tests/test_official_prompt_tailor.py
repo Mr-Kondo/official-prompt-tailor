@@ -850,13 +850,15 @@ class TestRouting(unittest.TestCase):
 
 
 class TestExecutionHosts(Base):
-    def test_every_documented_host_can_run_but_only_claude_code_can_observe_reads(self):
+    def test_every_documented_host_can_run_but_only_log_adapter_hosts_can_observe_reads(self):
         for host in ev.HOSTS:
             with self.subTest(host):
                 run, log = self.good_run(f"run-{host}", execution_host=host)
                 rep = self.verify(run, "live", log)  # a Claude Code-format log is offered to every host
                 if host == "claude-code":
                     self.assertEqual(rep["verdict"], "PASS_LIVE", rep["errors"])
+                elif host == "codex":  # its own adapter reads it: a Claude Code log is another format, so refused
+                    self.assertEqual(codes(rep), {"host_log_invalid"})
                 else:
                     self.assertEqual(rep["verdict"], "INCOMPLETE")
                     self.assertEqual(codes(rep), {"no_log_adapter_for_host"})  # nothing else is wrong; the read is just unobservable
@@ -867,6 +869,73 @@ class TestExecutionHosts(Base):
     def test_unknown_host_is_rejected(self):
         with self.assertRaises(ev.ContractError):
             self.fetch(execution_host="some-agent")
+
+
+class TestCodexAdapter(Base):
+    """codex-rollout-jsonl-v1: reads are cat/sed/rtk read of the body inside an `exec` script, output attributed only when the script has one command."""
+    def setUp(self):
+        super().setUp()
+        self.run, _ = self.good_run("run-cx", execution_host="codex")
+        self.body = self.run / "snapshots" / "doc-a" / "body.txt"
+        self.bl = self.body.read_text(encoding="utf-8").split("\n")[:-1]
+
+    def codex_log(self, cmd=None, out=None, gen_first=False, write=True, version="0.162.0-alpha.17.2", exit_code=0, name="cx.jsonl", extra=None):
+        def call(i, c):
+            return {"type": "response_item", "payload": {"type": "custom_tool_call", "name": "exec", "call_id": i,
+                    "input": "const r = await tools.exec_command({cmd:" + json.dumps(c) + ',"max_output_tokens":6000});text(r.output);'}}
+
+        def done(i, text):
+            body = json.dumps({"chunk_id": "x", "exit_code": exit_code, "output": text})
+            return {"type": "response_item", "payload": {"type": "custom_tool_call_output", "call_id": i, "output": [
+                {"type": "input_text", "text": "Script completed\nWall time 0.1 seconds\nOutput:\n"}, {"type": "input_text", "text": body}]}}
+        cmd = f"cat {self.body.as_posix()}" if cmd is None else cmd
+        out = "\n".join(self.bl) + "\n" if out is None else out
+        r = [call("r1", cmd), done("r1", out)]
+        w = [call("w1", f"python3 gen.py > {self.run / 'optimized.md'}"), done("w1", "")] if write else []
+        seq = [{"type": "session_meta", "payload": {"cli_version": version, "cwd": str(self.tmp)}}] + (w + r if gen_first else r + w) + (extra or [])
+        p = self.tmp / "logs" / name
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("\n".join(json.dumps(x, ensure_ascii=False) for x in seq) + "\n", encoding="utf-8")
+        return p
+
+    def check_log(self, log):
+        return self.verify(self.run, "live", log)
+
+    def test_a_cat_before_the_generation_write_is_observed(self):
+        for version in ("0.162.0-alpha.17.2", "0.155.1"):  # the Desktop and the `codex exec` versions the format was observed on
+            with self.subTest(version):
+                rep = self.check_log(self.codex_log(version=version))
+                self.assertEqual(rep["verdict"], "PASS_LIVE", rep["errors"])
+                self.assertEqual(rep["sources"][0]["read_status"], "observed")
+
+    def test_no_read_is_not_observed(self):
+        for cmd in ("echo hello", f"ls {self.body.as_posix()}", f"cat {self.body.as_posix()} | head -2", f"cat {self.body.as_posix()}; cat {self.body.as_posix()}"):
+            with self.subTest(cmd):
+                self.assertIn("read_not_observed", codes(self.check_log(self.codex_log(cmd=cmd))))
+
+    def test_a_failed_read_is_not_observed(self):
+        self.assertIn("read_not_observed", codes(self.check_log(self.codex_log(exit_code=1))))
+
+    def test_a_truncated_read_counts_only_the_lines_it_shows(self):
+        cut = "\n".join(self.bl[:1]) + "\n" + self.bl[1][:3] + "…99 tokens truncated…" + self.bl[1][3:] + "\n"
+        rep = self.check_log(self.codex_log(out=cut))
+        self.assertEqual((rep["verdict"], rep["sources"][0]["read_status"]), ("INCOMPLETE", "not_observed"))
+        self.assertEqual(ev._aligned_lines(cut, self.bl), {1})  # the line the mark cut is not counted
+
+    def test_a_read_after_the_generation_write_is_not_observed(self):
+        self.assertIn("read_not_observed", codes(self.check_log(self.codex_log(gen_first=True))))
+
+    def test_another_cli_version_or_format_is_refused(self):
+        for log in (self.codex_log(version="0.200.0"), self.write_log(self.run, path=self.tmp / "claude.jsonl")):
+            self.assertEqual(codes(self.check_log(log)), {"host_log_invalid"})
+
+    def test_a_line_that_fits_two_places_is_not_counted(self):
+        self.assertEqual(ev._aligned_lines("x\n", ["x", "y", "x"]), set())
+        self.assertEqual(ev._aligned_lines("x\ny\n", ["x", "y", "x"]), {1, 2})
+
+    def test_numbered_output_is_read_by_its_numbers(self):
+        out = "\n".join(f"{n:6d}\t{l}" for n, l in enumerate(self.bl, 1)) + "\n"
+        self.assertEqual(self.check_log(self.codex_log(cmd=f"nl -ba {self.body}", out=out))["verdict"], "PASS_LIVE")
 
 
 class TestLifecycleRouting(Base):
@@ -1835,7 +1904,7 @@ class TestSourcesRun(Base):
         rep = self.report(None)
         self.assertEqual(rep["verdict"], "CONSISTENT")
         self.assertEqual((rep["selected"][0]["read"]["status"], rep["selected"][0]["read"]["reason"]), ("unavailable", "no_host_log"))
-        run, log = self.good_run("run-codex", execution_host="codex")
+        run, log = self.good_run("run-agy", execution_host="antigravity")
         rep = ev.sources_report(run, log)  # a Claude Code log is offered to a host whose logs are not understood: not parsed
         self.assertEqual((rep["verdict"], rep["selected"][0]["read"]["reason"]), ("CONSISTENT", "no_log_adapter_for_host"))
 

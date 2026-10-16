@@ -27,7 +27,7 @@
 
 - snapshot は、改ざん耐性のある署名ではありません。同じユーザーが書き換えられるファイルシステム上の、「再検査可能な取得物」です。
 - `--host-log` は、運用者が指定したパスを信頼します。署名や収集元の認証はしません。run ディレクトリ内のログは自作として `FAIL`、ログなしは `INCOMPLETE` です。ログのパスを、スキルが自分で探して渡してはいけません。
-- `--host-log` の adapter(`claude-code-transcript-jsonl-v1`)は、Claude Code 2.1.287 のトランスクリプトで観測した形式を読みます。観測した形式は、`tool_use` / `tool_result` ブロックと、`Read` 結果の行番号付き本文です。
+- `--host-log` の adapter(`claude-code-transcript-jsonl-v1`)は、Claude Code 2.1.287 のトランスクリプトで観測した形式を読みます。観測した形式は、`tool_use` / `tool_result` ブロックと、`Read` 結果の行番号付き本文です。Codex の adapter(`codex-rollout-jsonl-v1`)は Codex `0.162.*` の rollout で観測した形式だけを読み、読取りの数え方の制限は [products.md](products.md) にあります。
 - この形式は、公式に保証された安定スキーマではありません。Claude Code の更新後は、`tests/` の形式と実ログを見比べてください。
 - サブエージェントの記録(全メッセージが `isSidechain` で、1 つの `agentId` を持つファイル)は、そのエージェント自身の記録として全体を読みます。メインの記録の中にある sidechain のメッセージは、これまでどおり読みません。`agentId` が複数ある、または無いファイルは、サブエージェントの記録とは見なしません。
 - DNS に残るリスクがあります。接続前に、名前解決結果(IPv4/IPv6 すべて)を検査します。ただし、検査と実接続は別々の名前解決で、敵対的な DNS(DNS rebinding)を完全には防げません。
