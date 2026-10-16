@@ -1295,8 +1295,11 @@ def parse_antigravity_transcript(path):
         if not isinstance(record, dict) or type(record.get("step_index")) is not int or record["step_index"] <= previous:
             raise ContractError("Antigravity step indices must be strictly increasing integers")
         previous = record["step_index"]
-        if record.get("type") not in ("USER_INPUT", "PLANNER_RESPONSE", "GENERIC") or record.get("status") not in ("DONE", "ERROR"):
+        allowed = ("USER_INPUT", "PLANNER_RESPONSE", "GENERIC") + (("SYSTEM_MESSAGE",) if manifest["cli_version"] == "1.4.0" else ())
+        if record.get("type") not in allowed or record.get("status") not in ("DONE", "ERROR"):
             raise ContractError("unsupported Antigravity record type/status")
+        if record["type"] == "SYSTEM_MESSAGE" and (record.get("source") != "SYSTEM" or record.get("tool_calls") or record["status"] != "DONE"):
+            raise ContractError("invalid Antigravity system message")
     for offset, (_, record) in enumerate(rows):
         if record["type"] == "PLANNER_RESPONSE":
             events.extend(_antigravity_tool_events(record, rows[offset + 1:offset + 2]))

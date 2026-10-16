@@ -1,0 +1,18 @@
+{
+  "observed_date_jst": "2026-10-17",
+  "cli_version": "1.4.0",
+  "conversation_id": "e31110ee-aa49-41b7-b9dd-4d49851561c5",
+  "native_log_sha256": "3f0607df387336fccc713031b86d3d2b3a51748980788ba09179062f8b6b8c27",
+  "verification": "PASS_LIVE",
+  "sources": "CONSISTENT",
+  "audit": "PASS",
+  "audit_passed": 15,
+  "read_lines": {
+    "claude-code-best-practices": 334,
+    "claude-code-prompt-library": 800,
+    "claude-context-claude-md": 131
+  },
+  "semantic_review": "NOT_REVIEWED",
+  "effect": "NOT_EVALUATED",
+  "permissions": "normal accept-edits; no global settings changes; no permission bypass"
+}

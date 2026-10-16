@@ -188,3 +188,9 @@ class TestAntigravityAdapter(Base):
                 log = self.save("1.3.5" if variant == "legacy" else "1.4.0")
                 seen, _ = ev.observed_read_lines(ev.parse_host_log("antigravity", log), self.body, [self.run / "optimized.md"])
                 self.assertEqual(bool(seen), variant == "valid")
+
+    def test_140_resume_system_message_is_not_tool_evidence(self):
+        self.rows.append({"step_index": 4, "type": "SYSTEM_MESSAGE", "source": "SYSTEM", "status": "DONE", "content": "resume metadata"})
+        self.assertEqual(self.verify(self.run, "live", self.save("1.4.0"))["verdict"], "PASS_LIVE")
+        self.rows[-1]["tool_calls"] = [{"name": "view_file", "args": {"AbsolutePath": str(self.body)}}]
+        self.assertIn("host_log_invalid", codes(self.verify(self.run, "live", self.save("1.4.0"))))
