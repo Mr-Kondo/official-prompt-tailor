@@ -913,6 +913,73 @@ class TestCodexAdapter(Base):
                 self.assertEqual(rep["verdict"], "PASS_LIVE", rep["errors"])
                 self.assertEqual(rep["sources"][0]["read_status"], "observed")
 
+    def rewrite_log(self, log, mutate):
+        rows = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+        mutate(rows)
+        log.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+        return log
+
+    def test_workdir_override_refuses_relative_reads_but_keeps_absolute_reads(self):
+        relative = self.body.relative_to(self.tmp).as_posix()
+        for spelling in ('workdir', '"workdir"', "'workdir'"):
+            for cmd, observed in ((f"cat {relative}", False), (f"cat {self.body.as_posix()}", True)):
+                with self.subTest(spelling=spelling, cmd=cmd):
+                    log = self.codex_log(cmd=cmd)
+                    def override(rows):
+                        call = rows[1]["payload"]
+                        call["input"] = call["input"].replace('"max_output_tokens":', spelling + ':"/different","max_output_tokens":')
+                    self.rewrite_log(log, override)
+                    rep = self.check_log(log)
+                    self.assertEqual(rep["sources"][0]["read_status"] == "observed", observed)
+        self.assertEqual(self.check_log(self.codex_log(cmd=f"cat {relative}"))["verdict"], "PASS_LIVE")
+
+    def test_rtk_proxy_plain_reads_are_observed_without_relaxing_attribution(self):
+        target = self.body.as_posix()
+        for command in (f"cat {target}", f"nl -ba {target}", f"head {target}",
+                        f"tail {target}", f"sed -n '1,999p' {target}", f"bat {target}", f"rtk read {target}"):
+            with self.subTest(command=command):
+                self.assertEqual(self.check_log(self.codex_log(cmd="rtk proxy " + command))["verdict"], "PASS_LIVE")
+        for command in (f"rtk proxy cat {target} other.txt", f"rtk proxy cat {target} | head",
+                        f"rtk proxy cat {target}; echo done", f"rtk proxy rtk proxy cat {target}",
+                        f"rtk proxy echo {target}"):
+            with self.subTest(command=command):
+                self.assertIn("read_not_observed", codes(self.check_log(self.codex_log(cmd=command))))
+
+    def test_multi_file_cat_cannot_credit_output_from_another_file(self):
+        other = self.tmp / "other.txt"
+        other.write_text("\n".join(self.bl) + "\n", encoding="utf-8")
+        # The target contributes no output (e.g. an empty file at read time); all matching text is from other.
+        rep = self.check_log(self.codex_log(cmd=f"cat {self.body.as_posix()} {other.as_posix()}"))
+        self.assertIn("read_not_observed", codes(rep))
+
+    def test_malformed_relevant_records_are_reported_as_invalid(self):
+        cases = ((1, "call_id", []), (2, "call_id", []), (1, "call_id", None),
+                 (1, "input", None), (2, "output", "bad"), (2, "output", [None]),
+                 (2, "output", [{"type": "input_text", "text": None}]),
+                 (2, "output", [{"type": "input_text"}]))
+        for index, field, value in cases:
+            with self.subTest(index=index, field=field, value=value):
+                log = self.rewrite_log(self.codex_log(), lambda rows: rows[index]["payload"].update({field: value}))
+                with self.assertRaises(ev.ContractError):
+                    ev.parse_host_log("codex", log)
+                self.assertEqual(codes(self.check_log(log)), {"host_log_invalid"})
+                self.assertIn("host_log_invalid", {p["code"] for p in ev.sources_report(self.run, log)["problems"]})
+
+    def test_version_boundaries_reject_prefix_lookalikes(self):
+        for version in ("0.155.10", "0.155.1-bogus", "0.162.", "0.162.bogus", "0.162.0-bogus", "0.162.0-alpha.1junk", None):
+            with self.subTest(version=version):
+                self.assertEqual(codes(self.check_log(self.codex_log(version=version))), {"host_log_invalid"})
+        for version in ("0.162.0", "0.162.12", "0.162.0-alpha.17.2"):
+            with self.subTest(version=version):
+                self.assertEqual(self.check_log(self.codex_log(version=version))["verdict"], "PASS_LIVE")
+
+    def test_unsupported_host_never_uses_claude_adapter(self):
+        log = self.write_log(self.run)
+        self.assertTrue(ev.parse_host_log("claude-code", log))
+        for host in ("chatgpt-work", "antigravity", "claude-cowork", "unknown"):
+            with self.subTest(host=host), self.assertRaises(ev.ContractError):
+                ev.parse_host_log(host, log)
+
     def test_no_read_is_not_observed(self):
         for cmd in ("echo hello", f"ls {self.body.as_posix()}", f"cat {self.body.as_posix()} | head -2", f"cat {self.body.as_posix()}; cat {self.body.as_posix()}"):
             with self.subTest(cmd):
@@ -2314,6 +2381,93 @@ class TestInstall(unittest.TestCase):
         dry.mkdir()
         self.assertEqual(self.install("--plugin", str(dry), "--dry-run").returncode, 0)
         self.assertEqual(list(dry.iterdir()), [])
+
+    def skill_dir(self):
+        return self.proj / ".claude" / "skills" / "official-prompt-tailor"
+
+    def backups(self):
+        return sorted(p.name for p in (self.proj / ".claude").glob("official-prompt-tailor.bak-*"))
+
+    def test_update_installs_when_absent_does_nothing_when_current_and_replaces_when_changed(self):
+        r = self.install("--update", "--project", str(self.proj))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("not installed yet, installing", r.stdout)
+        self.assertTrue((self.skill_dir() / "SKILL.md").is_file())
+        r = self.install("--update", "--project", str(self.proj))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("up to date", r.stdout)
+        self.assertEqual(self.backups(), [])  # nothing to replace: no backup is made
+        (self.skill_dir() / "SKILL.md").write_text("---\nname: official-prompt-tailor\n---\nold\n", encoding="utf-8")  # an older copy
+        r = self.install("--update", "--project", str(self.proj))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("updated:", r.stdout)
+        self.assertEqual((self.skill_dir() / "SKILL.md").read_bytes(), (ROOT / ".claude/skills/official-prompt-tailor/SKILL.md").read_bytes())
+        self.assertEqual(len(self.backups()), 1)  # the old copy is kept, as with --force
+        self.assertIn("old", (self.proj / ".claude" / self.backups()[0] / "SKILL.md").read_text(encoding="utf-8"))
+
+    def test_update_notices_a_file_added_or_removed_and_not_only_a_changed_one(self):
+        self.install("--update", "--project", str(self.proj))
+        (self.skill_dir() / "references" / "review-rubric.md").unlink()
+        self.assertIn("updated:", self.install("--update", "--project", str(self.proj)).stdout)
+        (self.skill_dir() / "extra.txt").write_text("x", encoding="utf-8")
+        self.assertIn("updated:", self.install("--update", "--project", str(self.proj)).stdout)
+        self.assertFalse((self.skill_dir() / "extra.txt").exists())
+        self.assertEqual(len(self.backups()), 2)
+
+    def test_update_leaves_alone_what_it_does_not_recognise_but_force_still_replaces_it(self):
+        other = self.skill_dir()
+        other.mkdir(parents=True)
+        (other / "SKILL.md").write_text("---\nname: something-else\n---\n", encoding="utf-8")
+        r = self.install("--update", "--project", str(self.proj))
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("not recognised", r.stderr)
+        self.assertIn("something-else", (other / "SKILL.md").read_text(encoding="utf-8"))
+        self.assertEqual(self.backups(), [])
+        self.assertEqual(self.install("--force", "--project", str(self.proj)).returncode, 0)  # --force is as it was
+        self.assertEqual(len(self.backups()), 1)
+        r = self.install("--project", str(self.proj))  # a plain install still stops, and now names both ways
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("--update", r.stderr)
+
+    def test_update_works_for_every_product_and_for_a_dry_run(self):
+        for target, rel in (("codex", ".agents/skills"), ("antigravity", ".gemini/config/skills"), ("antigravity-cli", ".gemini/antigravity-cli/skills")):
+            with self.subTest(target):
+                self.assertEqual(self.install("--update", "--user", "--target", target).returncode, 0)
+                dest = self.home / rel / "official-prompt-tailor"
+                self.assertTrue((dest / "SKILL.md").is_file())
+                self.assertIn("up to date", self.install("--update", "--user", "--target", target).stdout)
+                (dest / "SKILL.md").write_text("---\nname: official-prompt-tailor\n---\nold\n", encoding="utf-8")
+                r = self.install("--update", "--user", "--target", target, "--dry-run")
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertIn("nothing was changed", r.stdout)
+                self.assertIn("old", (dest / "SKILL.md").read_text(encoding="utf-8"))
+                self.assertEqual(self.install("--update", "--user", "--target", target).returncode, 0)
+                self.assertNotIn("old", (dest / "SKILL.md").read_text(encoding="utf-8"))
+
+    def test_update_does_not_combine_with_uninstall_and_a_zip_is_made_again(self):
+        self.assertEqual(self.install("--update", "--uninstall", "--project", str(self.proj)).returncode, 1)
+        out = self.tmp / "out"
+        out.mkdir()
+        self.assertEqual(self.install("--update", "--zip", str(out)).returncode, 0)
+        self.assertEqual(self.install("--update", "--zip", str(out)).returncode, 0)  # a ZIP is a build output: no "already exists"
+        self.assertEqual(len(list(out.glob("official-prompt-tailor.zip.bak-*"))), 1)
+
+    def test_update_of_a_plugin_follows_the_same_rules(self):
+        out = self.tmp / "plug"
+        out.mkdir()
+        self.assertIn("created", self.install("--update", "--plugin", str(out)).stdout)
+        self.assertIn("up to date", self.install("--update", "--plugin", str(out)).stdout)
+        manifest = out / "official-prompt-tailor" / ".codex-plugin" / "plugin.json"
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        data["version"] = "0.0.1"  # an older plugin
+        manifest.write_text(json.dumps(data), encoding="utf-8")
+        self.assertIn("created", self.install("--update", "--plugin", str(out)).stdout)
+        self.assertNotEqual(json.loads(manifest.read_text(encoding="utf-8"))["version"], "0.0.1")
+        self.assertEqual(len(list(out.glob("official-prompt-tailor.bak-*"))), 1)
+        (out / "official-prompt-tailor" / ".codex-plugin" / "plugin.json").write_text('{"name": "other"}', encoding="utf-8")
+        r = self.install("--update", "--plugin", str(out))
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("not recognised", r.stderr)
 
     def test_uninstall_removes_only_the_copy_and_reports_missing_ones(self):
         self.assertEqual(self.install("--project", str(self.proj)).returncode, 0)
