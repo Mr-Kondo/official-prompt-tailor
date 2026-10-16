@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """CI glue for the weekly watch workflow (not part of the skill).
 
-  ci_report.py drift|discover|kept RESULT.json [--issue]
+  ci_report.py drift|discover|kept|rereview RESULT.json [--issue]
 
 Prints a Markdown report. With --issue, a result that needs a person (DRIFT / CANDIDATES) is also written to the
 one open issue that carries the label of that kind (an issue is opened when none is). The body is replaced, not
@@ -15,6 +15,7 @@ KINDS = {  # kind: (report heading, verdict that needs a person, issue title)
     "drift": ("公式資料の更新確認", "DRIFT", "公式資料が、規則の審査後に変わっています"),
     "discover": ("公式資料の新規ページ候補", "CANDIDATES", "公式資料に、登録していない新規ページの候補があります"),
     "kept": ("審査時の本文の保存", None, None),  # a report only: never an issue
+    "rereview": ("再審査の見込み(旧本文との比較)", None, None),  # a report only: it quotes the pages, so it stays in the run's Summary
 }
 STATE = {"changed": "引用は残っているが、本文が変わった", "excerpt_missing": "引用が本文から消えた"}
 
@@ -29,7 +30,7 @@ def drift_lines(r):
     if rows:
         out += ["| 規則 | 資料 | 状態 |", "|---|---|---|"]
         out += [f"| `{x['rule_id']}` | `{x['source_id']}` | {STATE[x['state']]} |" for x in rows]
-        out += ["", "対応: `python3 tools/maintain.py rereview` が、旧本文と比べます。引用とその前後が同じ規則は `--write` で再審査でき、残りは差分を読んで判断します(docs/maintenance.md の「再審査する」)。再審査したら、この Issue を閉じてください。", ""]
+        out += ["", "対応: 旧本文との比較(`rereview`)の結果は、この実行の Summary にあります。旧本文は Actions のキャッシュにあり、手元の clone にはないので、手元では `rereview --accept` で、読んで判断した規則を更新します(docs/maintenance.md の「再審査する」)。再審査したら、この Issue を閉じてください。", ""]
     return out + [f"- 取得できなかった資料: `{s['source_id']}`({cell(s['error'])})" for s in r["sources"] if s["body_sha256"] is None]
 
 
@@ -53,8 +54,36 @@ def kept_lines(r):
     return out + [f"- 取得できなかった資料: `{s['source_id']}`({cell(s['error'])})" for s in r["sources"] if s["status"] == "not_fetched"]
 
 
+REREVIEW_CLASS = {"context_unchanged": "引用とその前後は同じ(機械で更新できる)", "context_changed": "引用の前後が変わった(差分を読む)",
+                  "old_body_unavailable": "旧本文がない(本文を読んで判断する)", "excerpt_missing": "引用が本文から消えた(更新できない)"}
+SHOWN_HUNKS, SHOWN_LINES, WIDTH = 5, 3, 100  # a few lines of what changed, so that the page need not be fetched to judge; not the page
+
+
+def short(text):
+    text = cell(text)
+    return text if len(text) <= WIDTH else text[:WIDTH - 1] + "…"
+
+
+def rereview_lines(r):
+    out = [f"判定: `{r['verdict']}`(registry は書き換えていません)", ""]
+    if r["rules"]:
+        out += ["| 規則 | 資料 | 見込み |", "|---|---|---|"]
+        out += [f"| `{x['rule_id']}` | `{x['source_id']}` | {REREVIEW_CLASS.get(x['class'], x['class'])} |" for x in r["rules"]]
+        out += ["", "手元で更新するときは、旧本文がキャッシュにしかないため、`python3 tools/maintain.py rereview --accept <rule_id> --reviewer \"…; not human\" --write` で、読んで判断した規則を指定します(docs/maintenance.md の「再審査する」)。", ""]
+    for s in r["sources"]:
+        for c in s.get("changes", []):
+            if c.get("old_body") == "unavailable":
+                out.append(f"- `{s['source_id']}`: 旧本文がありません(`{c['from_sha256'][:12]}…`)")
+                continue
+            out.append(f"- `{s['source_id']}`: 変わった所 {c['count']} か所(旧本文 `{c['from_sha256'][:12]}…`)")
+            for h in c["hunks"][:SHOWN_HUNKS]:
+                out.append(f"  - 旧 {h['old_lines'][0]}〜{h['old_lines'][1]} 行 → 新 {h['new_lines'][0]}〜{h['new_lines'][1]} 行")
+                out += [f"    - 前: {short(x)}" for x in h["removed"][:SHOWN_LINES]] + [f"    - 後: {short(x)}" for x in h["added"][:SHOWN_LINES]]
+    return out + [f"- 取得できなかった資料: `{s['source_id']}`({cell(s['error'])})" for s in r["sources"] if s["body_sha256"] is None]
+
+
 def render(kind, r):
-    lines = {"drift": drift_lines, "discover": discover_lines, "kept": kept_lines}[kind](r)
+    lines = {"drift": drift_lines, "discover": discover_lines, "kept": kept_lines, "rereview": rereview_lines}[kind](r)
     head = [f"## {KINDS[kind][0]}: {r['verdict']}", "", f"確認日時(UTC): {r['checked_at']}", ""]
     return "\n".join(head + lines).rstrip("\n") + "\n"
 

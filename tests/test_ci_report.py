@@ -52,6 +52,23 @@ class TestRender(unittest.TestCase):
         self.assertEqual(ci_report.KINDS["kept"][1], None)
 
 
+    def test_rereview_names_what_each_rule_needs_and_quotes_only_a_few_short_lines(self):
+        hunk = {"old_lines": [3, 9], "new_lines": [3, 9], "removed": [f"line {i} | " + "x" * 300 for i in range(6)], "added": ["new"]}
+        r = {"verdict": "NEEDS_REVIEW", "checked_at": "2026-10-19T03:20:00Z",
+             "rules": [{"rule_id": f"r{i}", "source_id": "s1", "class": c} for i, c in enumerate(ci_report.REREVIEW_CLASS)],
+             "sources": [{"source_id": "s1", "status": "live", "error": None, "body_sha256": "a" * 64,
+                          "changes": [{"from_sha256": "b" * 64, "count": 9, "hunks": [hunk] * 9}, {"from_sha256": "c" * 64, "old_body": "unavailable"}]}]}
+        md = ci_report.render("rereview", r)
+        for text in ci_report.REREVIEW_CLASS.values():
+            self.assertIn(text, md)
+        self.assertIn("変わった所 9 か所", md)
+        self.assertIn("旧本文がありません", md)
+        self.assertEqual(md.count("旧 3〜9 行"), ci_report.SHOWN_HUNKS)  # five of nine
+        self.assertEqual(md.count("    - 前:"), ci_report.SHOWN_HUNKS * ci_report.SHOWN_LINES)  # three of six lines each
+        self.assertNotIn("x" * ci_report.WIDTH, md)  # a line is cut
+        self.assertEqual(ci_report.KINDS["rereview"][1], None)  # never an issue: it quotes the pages
+
+
 class FakeGitHub:
     """Just enough of `gh issue ...` to look at the issues afterwards instead of at the commands sent."""
 
