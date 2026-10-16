@@ -36,7 +36,8 @@ LOG_ADAPTER_HOSTS = ("claude-code",)  # hosts whose session logs the read-observ
 TARGET_IDS = ("chatgpt", "chatgpt-work", "codex", "claude", "claude-cowork", "claude-code", "gemini",
               "antigravity", "gemini-agent-app", "gemini-cli", "google-adk-agent")
 PURPOSES = ("one-shot", "persistent-instructions", "skill-instructions", "agent-instruction")
-EXTRACTIONS = ("html-main-v1", "html-article-v1", "html-body-v1", "markdown-v1")
+EXTRACTIONS = ("html-main-v1", "html-article-v1", "html-body-v1", "markdown-v1", "markdown-v2")
+MARKDOWN = ("markdown-v1", "markdown-v2")
 FRESH_DAYS = 7  # local policy, not a vendor rule
 MAX_HOPS, TIMEOUT, MAX_BYTES = 5, 15, 5 * 1024 * 1024
 RETRY_WAIT = 2  # seconds drift waits before it looks again at a source that looks wrong
@@ -365,6 +366,12 @@ CHALLENGE = ("just a moment", "verify you are human", "access denied", "enable j
 UPDATED_LABEL = re.compile(r"^Updated (today|yesterday|(about |over |almost )?(a|an|\d+) (minute|hour|day|week|month|year)s? ago)$", re.I)
 
 
+# markdown-v2 is markdown-v1 without the query of a signed image address. Intercom (support.claude.com) signs the images of an article
+# (`?expires=…&signature=…&req=…`) and re-signs them every hour, so the same article has a new body hash each hour (seen 2026-10-16, claude-cowork-projects).
+# Only an image whose query holds `signature=` is touched; the bounds keep the match linear on hostile input.
+SIGNED_IMAGE = re.compile(r"(!\[[^\]\n]{0,300}\]\([^)\s?]{1,2000})\?[^)\s]{0,2000}\bsignature=[^)\s]{0,2000}\)")
+
+
 def process_body(src, raw, content_type):
     """Deterministic raw bytes -> normalised body text. Raises Blocked(code)."""
     ex = src["extraction"]
@@ -374,7 +381,7 @@ def process_body(src, raw, content_type):
     m = re.search(r"charset=([^;\s]+)", content_type or "", re.I)
     if m and m.group(1).strip("\"'").lower().replace("_", "-") not in ("utf-8", "utf8"):
         raise Blocked("unsupported_charset")
-    want = ("text/markdown", "text/plain", "text/x-markdown") if ex == "markdown-v1" else \
+    want = ("text/markdown", "text/plain", "text/x-markdown") if ex in MARKDOWN else \
         ("text/html", "application/xhtml+xml")
     if ctype not in want:
         raise Blocked(f"unexpected_content_type:{ctype}")
@@ -382,8 +389,10 @@ def process_body(src, raw, content_type):
         text = norm(raw.decode("utf-8"))
     except UnicodeDecodeError:
         raise Blocked("not_utf8")
-    if ex == "markdown-v1":
+    if ex in MARKDOWN:
         body = "\n".join(l.rstrip() for l in text.split("\n")).strip("\n") + "\n"
+        if ex == "markdown-v2":
+            body = SIGNED_IMAGE.sub(r"\1)", body)
     else:
         p = _Extract({"html-main-v1": "main", "html-article-v1": "article", "html-body-v1": "body"}[ex])
         p.feed(text)
