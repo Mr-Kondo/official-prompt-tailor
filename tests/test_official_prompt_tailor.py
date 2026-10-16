@@ -857,7 +857,7 @@ class TestExecutionHosts(Base):
                 rep = self.verify(run, "live", log)  # a Claude Code-format log is offered to every host
                 if host == "claude-code":
                     self.assertEqual(rep["verdict"], "PASS_LIVE", rep["errors"])
-                elif host == "codex":  # its own adapter reads it: a Claude Code log is another format, so refused
+                elif host in ("codex", "antigravity"):  # its own adapter reads it: a Claude Code log is another format, so refused
                     self.assertEqual(codes(rep), {"host_log_invalid"})
                 else:
                     self.assertEqual(rep["verdict"], "INCOMPLETE")
@@ -976,9 +976,12 @@ class TestCodexAdapter(Base):
     def test_unsupported_host_never_uses_claude_adapter(self):
         log = self.write_log(self.run)
         self.assertTrue(ev.parse_host_log("claude-code", log))
-        for host in ("chatgpt-work", "antigravity", "claude-cowork", "unknown"):
-            with self.subTest(host=host), self.assertRaises(ev.ContractError):
+        for host in ("chatgpt-work", "claude-cowork", "unknown"):
+            with self.subTest(host=host), self.assertRaisesRegex(ev.ContractError, "no log adapter for host"):
                 ev.parse_host_log(host, log)
+        # Antigravity is registered, but a Claude transcript has no valid version sidecar.
+        with self.assertRaisesRegex(ev.ContractError, "Antigravity version sidecar missing or invalid"):
+            ev.parse_host_log("antigravity", log)
 
     def test_no_read_is_not_observed(self):
         for cmd in ("echo hello", f"ls {self.body.as_posix()}", f"cat {self.body.as_posix()} | head -2", f"cat {self.body.as_posix()}; cat {self.body.as_posix()}"):
@@ -1977,8 +1980,8 @@ class TestSourcesRun(Base):
         self.assertEqual(rep["verdict"], "CONSISTENT")
         self.assertEqual((rep["selected"][0]["read"]["status"], rep["selected"][0]["read"]["reason"]), ("unavailable", "no_host_log"))
         run, log = self.good_run("run-agy", execution_host="antigravity")
-        rep = ev.sources_report(run, log)  # a Claude Code log is offered to a host whose logs are not understood: not parsed
-        self.assertEqual((rep["verdict"], rep["selected"][0]["read"]["reason"]), ("CONSISTENT", "no_log_adapter_for_host"))
+        rep = ev.sources_report(run, log)  # a Claude Code log must be refused by the Antigravity adapter
+        self.assertEqual((rep["verdict"], rep["selected"][0]["read"]["reason"]), ("INCONSISTENT", "host_log_invalid"))
 
     def test_reads_that_do_not_show_the_cited_lines_are_incomplete_and_a_forged_log_is_inconsistent(self):
         partial = self.write_log(self.run, lines=[1, 3], path=self.tmp / "partial.jsonl")
