@@ -1,0 +1,20 @@
+{
+  "observed_at": "2026-10-17T00:55:48+09:00",
+  "cli_version": "1.3.5",
+  "format": "antigravity-transcript-jsonl-v1",
+  "conversation_id": "8d74f98a-7b85-46ff-82e6-37a302d3e2ad",
+  "log_sha256": "6e3c77ce663a955cf6453665d2082eed5c3d89b83ea43c2706b1c05c1b3f50ba",
+  "agy_binary_sha256": "a4502aaf310b2fd6eb657fcfec2fcc31a690fbbd0c2d14c8eefbb556409024ce",
+  "read_lines": [
+    1,
+    2
+  ],
+  "first_generation_attempt_step": 3,
+  "generated_file_exists": false,
+  "write_status": "ERROR",
+  "denied_action": "write_file",
+  "runtime_exit_code": 0,
+  "runtime_result_status": "SUCCESS",
+  "full_skill_audit": "NOT_RUN_PERMISSION_BLOCKED",
+  "sources_host_log_full_skill": "NOT_RUN_PERMISSION_BLOCKED"
+}

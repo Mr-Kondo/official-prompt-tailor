@@ -79,7 +79,7 @@ sources --run RUN [--host-log LOG]                                          # ru
 
 報告(`mode: run`)は、計画の `model` `skipped` に加えて、次を出す。`input` に `execution_host` が加わる。
 - `selected`: `acquisition.json` の `selected_sources` ごとに、`source_id` `models` `route` `url` `status` `fetched_at` `body_sha256`、`integrity`(`ok` / `mismatch` / `missing` / `unavailable`。`body.txt` のハッシュを記録と比べる)、`rules`(`applicable` = その run で選べる規則の数、`cited` = 変更が引用した規則)、`read`。
-- `read`: `status`(`observed` / `not_observed` / `self_reported` / `unavailable`)、`reason`、`lines_seen` `lines_total` `ranges`(読んだ行)、`cited_lines_covered`。`--host-log` の Claude Code のログから、`verify` と同じ規則(成功した `Read` が、生成物の最初の書込みより前に、その行を示した)で求める。ログがなければ `no_host_log`、`execution_host` が `claude-code` でなければ `no_log_adapter_for_host` で、`unavailable`。
+- `read`: `status`(`observed` / `not_observed` / `self_reported` / `unavailable`)、`reason`、`lines_seen` `lines_total` `ranges`(読んだ行)、`cited_lines_covered`。`--host-log` の対応ホストのログから、`verify` と同じ規則(成功した `Read` が、生成物の最初の書込みより前に、その行を示した)で求める。ログがなければ `no_host_log`、対応 adapter がない `execution_host` なら `no_log_adapter_for_host` で、`unavailable`。
 - `citations`: 変更ごとの `rule_id` `source_id` `lines` `reviewer_id` `human_reviewed` `in_scope`(その run で選べる規則か)。`review`: 引用した規則の審査者の集計(`rules` の `review` と同じ形)。
 - `problems`(`severity` = `fail` / `incomplete`、`code`、`message`)と `verdict`。
 
@@ -124,7 +124,7 @@ sources --run RUN [--host-log LOG]                                          # ru
 - その結果が `optimized.md` / `recommendations.json` への最初の書込みより前にある。
 - ログが run ディレクトリの外にある。
 
-`execution_host` は `claude-code` / `codex` / `chatgpt-work` / `antigravity` / `claude-cowork`。読取りの adapter があるのは `claude-code`(`claude-code-transcript-jsonl-v1`)と `codex`(`codex-rollout-jsonl-v1`、`session_meta.cli_version` が `0.155.1` か `0.162.*` のときだけ。ほかの版は `host_log_invalid`)で、他のホストでは `no_log_adapter_for_host`(総合 `INCOMPLETE`)になる。ログを渡しても解釈しない。
+`execution_host` は `claude-code` / `codex` / `chatgpt-work` / `antigravity` / `claude-cowork`。読取りの adapter があるのは `claude-code`(`claude-code-transcript-jsonl-v1`)と `codex`(`codex-rollout-jsonl-v1`、`session_meta.cli_version` が `0.155.1` か `0.162.*` のときだけ。ほかの版は `host_log_invalid`)と `antigravity`(`antigravity-transcript-jsonl-v1`、agy 1.3.5 の観測形式。版と SHA-256 の sidecar が必須)で、他のホストでは `no_log_adapter_for_host`(総合 `INCOMPLETE`)になる。ログを渡しても解釈しない。
 
 信頼境界: ログのパスは運用者が指定する。署名や独立収集元の認証はしない。運用者が独立した収集元を確認できない場合は `--host-log` を付けず、総合 `INCOMPLETE` を受け入れる。
 

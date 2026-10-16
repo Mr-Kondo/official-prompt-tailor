@@ -1,0 +1,4 @@
+{"step_index": 0, "source": "USER", "type": "USER_INPUT", "status": "DONE", "content": "synthetic"}
+{"step_index": 1, "source": "MODEL", "type": "PLANNER_RESPONSE", "status": "DONE", "tool_calls": [{"name": "view_file", "args": {"AbsolutePath": "BODY"}}]}
+{"step_index": 2, "source": "MODEL", "type": "GENERIC", "status": "DONE", "content": "Created At: 2026-10-17T00:55:42+09:00\nCompleted At: 2026-10-17T00:55:42+09:00\nFile Path: `file://BODY`\nTotal Lines: 3\nTotal Bytes: 39\nShowing lines 1 to 3\nNumbered file contents:\n1: adapter probe alpha\n2: adapter probe beta\n3: \nThe above content shows the entire, complete file contents of the requested file.\n"}
+{"step_index": 3, "source": "MODEL", "type": "PLANNER_RESPONSE", "status": "DONE", "tool_calls": [{"name": "write_to_file", "args": {"TargetFile": "GEN", "CodeContent": "synthetic"}}]}
