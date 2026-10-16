@@ -142,11 +142,13 @@ python3 tools/maintain.py review                          # 人がまだ審査�
 python3 tools/maintain.py review --rule <rule_id> --source <source_id> --limit 10
 ```
 
-- **対話端末でだけ動きます。** 標準入力と標準出力が端末で、環境変数 `CI` がないときだけです。スクリプトやエージェントのツール呼出し、CI では、何も書かずに終了コード 2 で終わります。
+- **対話端末でだけ動きます。** 標準入力と標準出力が端末で、環境変数 `CI`・`GITHUB_ACTIONS`・`CLAUDECODE`・`CLAUDE_CODE_ENTRYPOINT` のどれも設定されていないときだけです。スクリプトやエージェントのツール呼出し、CI では、何も書かずに終了コード 2 で終わります。これは、プロセスの起動のされ方の検査です。擬似端末(pty)を使うプログラムが、人の代わりに入力することは、防げません(独立レビューで再現しました)。
 - 規則ごとに、資料の URL、対象、使える前提、使えない場合、意味、許される変更、引用、いまの本文の該当行(前後 5 行)を出します。本文が審査したときと変わっていれば、そう表示します。引用が本文にないときは、記録できません。
 - 「審査した人の名前」を入力した規則にだけ、`reviewer_id` を `human:<名前>` として記録します(確認で `y`)。空は飛ばし、`q` は終了です。1 件ずつ書き込むので、途中で止めても、記録済みの分は残ります。
 - 記録するのは、`source_body_sha256`(見せた本文のハッシュ)、`reviewed_at`、`reviewer_id` と、`tools/human-reviews.json` への 1 行です。この記録がない `human:` の規則は、テスト(`test_no_rule_claims_a_human_review_that_nobody_has_made`)が拒否します。エージェントが `registry.json` を直接書き換えて、人の審査を名乗るのを防ぐためです。
 - 入力した名前が本人かどうかは、確かめられません。端末で入力されたことを、記録しているだけです。コミットの作者と合わせて読んでください。
+- 台帳(`tools/human-reviews.json`)は署名のない平文で、registry と一緒に書き換えれば、テストを通せます。台帳を先に書き、registry を書けなかったときは台帳の追記を取り消します。`adopt` は、spec の `reviewer_id` が `human:` で始まるものを拒否します(人の審査を記録するのは `review` だけです)。
+- registry を書く直前に、読んだときのバイト列と比べます。人が入力している間などに registry が変わっていたら、何も書かずに止まります(`adopt`・`rereview --write`・`review` に共通)。
 - 人の審査を記録したら、`python3 tools/maintain.py docs --write` で、README と `docs/trust-boundary.md` の件数を直します。
 
 ### 新しい資料を足す(`adopt`)
