@@ -29,11 +29,12 @@ python3 install.py --target antigravity --user                     # Antigravity
 python3 install.py --target antigravity-cli --user                 # Antigravity CLI: ~/.gemini/antigravity-cli/skills/
 python3 install.py --zip <出力先ディレクトリ>                      # Claude / Cowork 用: official-prompt-tailor.zip
 python3 install.py --plugin <出力先ディレクトリ>                   # ChatGPT Work / Codex 用プラグイン: <dir>/official-prompt-tailor/
-python3 install.py --uninstall --project <プロジェクト>            # 削除。他の指定(--user / --target / --plugin)もインストール時と同じ引数
+python3 install.py --update --project <プロジェクト>               # 更新。他の指定(--user / --target / --plugin)もインストール時と同じ引数
+python3 install.py --uninstall --project <プロジェクト>            # 削除。他の指定もインストール時と同じ引数
 ```
 
 - スキルのディレクトリをコピーするだけです。設定・hook・権限は変更しません。
-- 既にある場合は止まります。`--force` で置き換えられ、`--dry-run` で内容だけ確認できます。
+- 既にある場合は止まります。`--update`(このスキルと確認できるものだけ)か `--force`(何でも)で置き換えられ、旧版は残ります。`--dry-run` で内容だけ確認できます。
 - 既存のセッションには、新しいスキルは出ません。新しいセッションを開いて呼んでください。
 - 実行結果は、スキルを使うワークスペースの `outputs/official-prompt-tailor/` に出ます。
 

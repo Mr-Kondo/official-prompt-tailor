@@ -9,10 +9,11 @@
   python3 install.py --zip <dir>                      <dir>/official-prompt-tailor.zip for claude.ai / Cowork upload
   python3 install.py --plugin <dir>                   <dir>/official-prompt-tailor/ as a plugin (ChatGPT Work / Codex format)
 
+  python3 install.py --update ...                     bring an installed copy up to date (the same arguments as the install); --force also works
   python3 install.py --uninstall ...                  remove what the same --project/--user/--target (or --plugin) arguments installed
 
 Copies the skill directory only. It does not edit settings, hooks or permissions. Installing never deletes:
-with --force an existing copy (or ZIP) is renamed to <name>.bak-<timestamp> beside it.
+with --force or --update an existing copy (or ZIP) is renamed to <name>.bak-<timestamp> beside it.
 --uninstall is the only command that deletes: it removes a copy it recognises as this skill (backups are left alone).
 """
 import argparse
@@ -100,6 +101,35 @@ def is_our_plugin(plugin_dir):
     return isinstance(manifest, dict) and manifest.get("name") == NAME and is_our_skill(plugin_dir / "skills" / NAME)
 
 
+def free_backup(parent, name):
+    """<name>.bak-<timestamp> beside the copy; a second one in the same second gets -2, -3 ... instead of replacing or stopping."""
+    first = parent / f"{name}.bak-{datetime.now():%Y%m%d%H%M%S}"
+    path, n = first, 2
+    while path.exists() or path.is_symlink():
+        path, n = parent / f"{first.name}-{n}", n + 1
+    return path
+
+
+def copy_state(dest, plugin):
+    """What stands at dest: absent | unrecognised (not this skill, or a symlink) | current (same files as the source) | outdated."""
+    if not dest.exists() and not dest.is_symlink():
+        return "absent"
+    if dest.is_symlink() or not (is_our_plugin(dest) if plugin else is_our_skill(dest)):
+        return "unrecognised"
+    skill = dest / "skills" / NAME if plugin else dest
+    present = {p.relative_to(skill).as_posix() for p in skill.rglob("*") if p.is_file() and "__pycache__" not in p.parts and p.suffix != ".pyc"}
+    wanted = {p.relative_to(SRC).as_posix() for p in SRC.rglob("*") if p.is_file() and "__pycache__" not in p.parts and p.suffix != ".pyc"}
+    if present != wanted or any((skill / r).read_bytes() != (SRC / r).read_bytes() for r in wanted):
+        return "outdated"
+    if plugin:
+        try:
+            if json.loads((dest / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8")).get("version") != PLUGIN_VERSION:
+                return "outdated"
+        except (OSError, ValueError):
+            return "outdated"
+    return "current"
+
+
 def uninstall(dest, plugin, force, dry):
     """Remove one installed copy. Refuses anything it cannot recognise, the skill source, and (without --force) unknown files."""
     tag = "[dry-run] " if dry else ""
@@ -152,7 +182,7 @@ def plugin_manifest(author):
     }
 
 
-def make_plugin(out_dir, author, force, dry):
+def make_plugin(out_dir, author, force, dry, update=False):
     out_dir = Path(out_dir).resolve()
     if not out_dir.is_dir():
         die(f"not a directory: {out_dir}")
@@ -163,12 +193,17 @@ def make_plugin(out_dir, author, force, dry):
         die("source and destination are the same directory")
     tag = "[dry-run] " if dry else ""
     backup = None
-    if dest.exists() or dest.is_symlink():
-        if not force:
-            die(f"already exists: {dest} (use --force; the old copy is kept)")
-        backup = out_dir / f"{NAME}.bak-{datetime.now():%Y%m%d%H%M%S}"
-        if backup.exists():
-            die(f"backup path already exists: {backup}")
+    state = copy_state(dest, True)
+    if update and not force:
+        if state == "unrecognised":
+            die(f"not recognised as this plugin, left alone: {dest} (--force replaces anything; the old one is kept)")
+        if state == "current":
+            print(f"up to date: {dest}")
+            return 0
+    if state != "absent":
+        if not (force or update):
+            die(f"already exists: {dest} (use --update or --force; the old copy is kept)")
+        backup = free_backup(out_dir, NAME)
         print(f"{tag}move {dest} -> {backup}")
         if not dry:
             dest.rename(backup)
@@ -225,7 +260,7 @@ def make_zip(out_dir, force, dry):
         print("dry-run only: nothing was changed")
         return 0
     if target.exists():
-        kept = out_dir / f"{NAME}.zip.bak-{datetime.now():%Y%m%d%H%M%S}"
+        kept = free_backup(out_dir, f"{NAME}.zip")
         target.rename(kept)
         print(f"previous ZIP kept at {kept}")
     write_zip(target, files)
@@ -256,6 +291,8 @@ def main(argv=None):
     ap.add_argument("--author", help="with --plugin: author name in the manifest (default: %s)" % PLUGIN_AUTHOR)
     ap.add_argument("--target", choices=sorted(TARGETS), help="product to install for (default: claude-code); not used with --zip")
     ap.add_argument("--force", action="store_true", help="replace an existing copy (the old one is kept as a backup); with --uninstall, remove even if unknown files are inside")
+    ap.add_argument("--update", action="store_true", help="bring an installed copy up to date: replace it when it is this skill and differs from the source "
+                    "(the old one is kept as a backup), do nothing when it is current, install when there is none; unlike --force it leaves alone what it does not recognise")
     ap.add_argument("--uninstall", action="store_true", help="remove the copy the same arguments would install (the only command that deletes)")
     ap.add_argument("--dry-run", action="store_true", help="print what would happen and change nothing")
     ap.add_argument("--gitignore", action="store_true", help="with --project: add 'outputs/' to DIR/.gitignore")
@@ -267,10 +304,12 @@ def main(argv=None):
         die(f"skill sources not found under {SRC}")
     if a.uninstall and (a.zip or a.gitignore or a.author):
         die("--uninstall does not combine with --zip (delete the ZIP yourself), --gitignore or --author")
+    if a.uninstall and a.update:
+        die("--update and --uninstall do not combine")
     if a.zip:
         if a.target or a.gitignore or a.author:
             die("--target, --gitignore and --author do not apply to --zip")
-        return make_zip(a.zip, a.force, a.dry_run)
+        return make_zip(a.zip, a.force or a.update, a.dry_run)  # a ZIP is a build output: updating it is making it again
     if a.plugin:
         if a.target or a.gitignore:
             die("--target and --gitignore do not apply to --plugin")
@@ -278,7 +317,7 @@ def main(argv=None):
             if not Path(a.plugin).is_dir():
                 die(f"not a directory: {a.plugin}")
             return uninstall(Path(a.plugin).resolve() / NAME, True, a.force, a.dry_run)
-        return make_plugin(a.plugin, a.author, a.force, a.dry_run)
+        return make_plugin(a.plugin, a.author, a.force, a.dry_run, a.update)
     if a.author:
         die("--author only works with --plugin")
     if a.gitignore and not a.project:
@@ -302,18 +341,26 @@ def main(argv=None):
         print(("[dry-run] " if a.dry_run else "") + action)
 
     backup = None
-    if dest.exists() or dest.is_symlink():
-        if not a.force:
-            die(f"already installed: {dest} (use --force to replace; the old copy is kept)")
+    state = copy_state(dest, False)
+    if a.update and not a.force:
+        if state == "unrecognised":
+            die(f"not recognised as this skill, left alone: {dest} (--force replaces anything; the old one is kept)")
+    current = a.update and not a.force and state == "current"
+    if a.update and state == "absent":
+        print(f"not installed yet, installing: {dest}")
+    if current:
+        print(f"up to date: {dest}")
+    elif state != "absent":
+        if not (a.force or a.update):
+            die(f"already installed: {dest} (use --update, or --force to replace anything; the old copy is kept)")
         # kept beside the skills folder, not inside it: a backup there would register as a second skill
-        backup = base.parent / f"{NAME}.bak-{datetime.now():%Y%m%d%H%M%S}"
-        if backup.exists():
-            die(f"backup path already exists: {backup}")
+        backup = free_backup(base.parent, NAME)
         say(f"move {dest} -> {backup}")
         if not a.dry_run:
             dest.rename(backup)
-    say(f"copy {SRC} -> {dest}")
-    if not a.dry_run:
+    if not current:
+        say(f"copy {SRC} -> {dest}")
+    if not a.dry_run and not current:
         base.mkdir(parents=True, exist_ok=True)
         shutil.copytree(SRC, dest, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
         ok, msg = self_check(dest)  # the copy must load its own registry; otherwise roll back
@@ -337,7 +384,9 @@ def main(argv=None):
     if a.dry_run:
         print("dry-run only: nothing was changed")
         return 0
-    print(f"installed: {dest}" + (f" (previous copy kept at {backup})" if backup else ""))
+    if current:
+        return 0
+    print(("updated: " if backup else "installed: ") + f"{dest}" + (f" (previous copy kept at {backup})" if backup else ""))
     print("next: start a new session of the product (running sessions may not list new skills), then invoke the skill")
     print(f"note: runs write to outputs/{NAME}/ in the workspace where the skill is used")
     return 0
