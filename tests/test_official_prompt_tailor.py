@@ -901,6 +901,11 @@ class TestCodexAdapter(Base):
     def check_log(self, log):
         return self.verify(self.run, "live", log)
 
+    def test_sources_report_reads_a_codex_log_the_same_way(self):
+        rep = ev.sources_report(self.run, self.codex_log())
+        self.assertEqual(rep["selected"][0]["read"]["status"], "observed")
+        self.assertEqual({x['code'] for x in ev.sources_report(self.run, self.codex_log(cmd="echo hello", name="no.jsonl"))['problems']}, {"read_not_observed"})
+
     def test_a_cat_before_the_generation_write_is_observed(self):
         for version in ("0.162.0-alpha.17.2", "0.155.1"):  # the Desktop and the `codex exec` versions the format was observed on
             with self.subTest(version):
