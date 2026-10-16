@@ -1686,6 +1686,18 @@ class TestCompare(CompareBase):
         code, e = self.compare()
         self.assertEqual(e["uncertain"], 1)  # order-dependent judgements stay uncertain, not wins
 
+    def test_human_scorer_needs_no_model_calibration_but_still_needs_blind_review(self):
+        scorer = {"scorer_id": "human:fixture", "method": "human", "rubric_version": self.rubric,
+                  "calibration_ref": None, "calibration_sha256": None}
+        self.plan(scorers=[scorer], metrics=[{"name": "success", "direction": "higher", "method": "rubric"}])
+        scoring = {k: scorer[k] for k in ("scorer_id", "method", "rubric_version", "calibration_sha256")}
+        for blind, reversed_check, expected in ((True, True, "IMPROVED_ON_TEST_SET"),
+                                                 (False, True, "INCOMPLETE"), (True, None, "INCOMPLETE")):
+            with self.subTest(blind=blind, reversed_check=reversed_check):
+                self.rows(lambda c, v, r: {"scoring": {**scoring, "blind": blind,
+                                                       "swapped_consistent": reversed_check}})
+                self.assertEqual(self.compare()[1]["status"], expected)
+
     def test_plan_for_another_registry_or_rubric_is_incomplete(self):
         self.plan(registry_sha256="a" * 64)
         self.rows()
