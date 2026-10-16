@@ -1,6 +1,6 @@
 # Antigravity transcript adapter
 
-`antigravity-transcript-jsonl-v1` supports the **observed agy CLI 1.3.5** format only. This is an observed local format, not an official versioned protocol. Relates to [#8](https://github.com/Mr-Kondo/official-prompt-tailor/issues/8) and [#15](https://github.com/Mr-Kondo/official-prompt-tailor/issues/15).
+`antigravity-transcript-jsonl-v1` supports the **observed agy CLI 1.3.5 and 1.4.0** formats only. This is an observed local format, not an official versioned protocol. Relates to [#8](https://github.com/Mr-Kondo/official-prompt-tailor/issues/8) and [#15](https://github.com/Mr-Kondo/official-prompt-tailor/issues/15).
 
 Use the completed native file at `~/.gemini/antigravity-cli/brain/<conversation-id>/.system_generated/logs/transcript_full.jsonl` (or a byte-identical copy outside the run directory). `transcript.jsonl` may truncate fields; records with truncated read content are not counted. Stream-JSON stdout is a different protocol and is rejected. No automatic search of private history is performed.
 
@@ -10,7 +10,7 @@ The native transcript does not identify its producer version. Observe `rtk agy -
 rtk python3 .claude/skills/official-prompt-tailor/scripts/pin_antigravity_log.py --log /absolute/path/transcript_full.jsonl --cli-version 1.3.5
 ```
 
-Run this command from the repository root with an existing completed transcript. It creates `<log>.version.json`, requiring the exact format name, CLI version and SHA-256. It refuses to overwrite a sidecar. Unsupported versions, missing/mismatched sidecars and malformed records yield `host_log_invalid`; logs inside a run still yield `host_log_inside_run`. A sidecar is an **operator assertion**, not proof of product identity, authenticity or an older transcript's producer version. Do not stamp historical logs based only on today's installed version. Pass the native log, not the sidecar, to the existing `verify --host-log` and `sources --host-log` options.
+Use `--cli-version 1.4.0` instead when that exact version produced the log. Run this command from the repository root with an existing completed transcript. It creates `<log>.version.json`, requiring the exact format name, CLI version and SHA-256. It refuses to overwrite a sidecar. Unsupported versions, missing/mismatched sidecars and malformed records yield `host_log_invalid`; logs inside a run still yield `host_log_inside_run`. A sidecar is an **operator assertion**, not proof of product identity, authenticity or an older transcript's producer version. Do not stamp historical logs based only on today's installed version. Pass the native log, not the sidecar, to the existing `verify --host-log` and `sources --host-log` options.
 
 ## What counts
 
@@ -31,3 +31,8 @@ On 2026-10-17 JST a separate bounded `agy --print` invocation was allowed 45 sec
 The adapter parsed that **actual native transcript** and observed lines `[1, 2]` before generation attempt step `3`. The requested generated file does not exist. agy exited `0` and reported `SUCCESS` with `denied_actions`; those outer statuses do not prove tool success. The exact log hash, executable hash, version, conversation ID and measured outcomes are in [the runtime evidence record](../tests/fixtures/antigravity-runtime-probe.json). The raw private transcript is not committed. [The fixture](../tests/fixtures/antigravity-1.3.5.jsonl) is synthetic and follows the observed envelope; it is not represented as the actual transcript.
 
 **Full independent skill execution, `audit` PASS and real `sources --host-log` CONSISTENT remain unverified.** The permission block prevents the required generated run artifacts, although audit dispatch is implemented and tested with synthetic records. Completion of #8's full independent-run acceptance criterion must wait for a permitted runtime and the audit integration. Unit tests and CI cannot substitute for that result.
+
+
+## agy 1.4.0 の追加確認 (2026-10-17 JST)
+
+インストール済みCLIが1.4.0へ更新されたため、別の専用ワークスペースで通常の `--mode accept-edits` による実ログを確認した。2行の読取りと `optimized.md` の作成が成功し、adapterでも生成前の2行を観測した。グローバル権限設定や許可スキップのオプションは変更していない。実ログの形式・版・ハッシュ・観測結果は `tests/fixtures/antigravity-140-runtime-probe.json`、対応する合成fixtureは `tests/fixtures/antigravity-1.4.0.jsonl` に記録した。1.3.5での拒否の記録は当時の結果として保持する。これは限定的なプローブであり、完全なスキル実行の成功を意味しない。

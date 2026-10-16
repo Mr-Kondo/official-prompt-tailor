@@ -33,7 +33,7 @@ REGISTRY_PATH = SKILL_DIR / "references" / "registry.json"
 RUBRIC_PATH = SKILL_DIR / "references" / "review-rubric.md"
 
 HOSTS = ("claude-code", "codex", "chatgpt-work", "antigravity", "claude-cowork")  # products that can run this skill
-ANTIGRAVITY_CLI_VERSION = "1.3.5"
+ANTIGRAVITY_CLI_VERSIONS = ("1.3.5", "1.4.0")
 LOG_ADAPTERS = {"antigravity": "antigravity-transcript-jsonl-v1", "claude-code": "claude-code-transcript-jsonl-v1", "codex": "codex-rollout-jsonl-v1"}  # host -> pinned log format
 LOG_ADAPTER_HOSTS = tuple(LOG_ADAPTERS)  # hosts whose session logs the read-observation adapter understands
 CODEX_CLI_VERSION = re.compile(r"(?:0\.155\.1|0\.162\.[0-9]+(?:-alpha(?:\.[0-9]+)+)?)")
@@ -1276,14 +1276,16 @@ def parse_host_log(host, path):
 
 
 def parse_antigravity_transcript(path):
-    """Observed agy 1.3.5 transcript; version sidecar is an operator assertion, not authentication."""
+    """Observed agy 1.3.5/1.4.0 transcript; version sidecar is an operator assertion, not authentication."""
     try:
         manifest = json.loads(Path(str(path) + ".version.json").read_text(encoding="utf-8"))
     except (OSError, ValueError) as ex:
         raise ContractError("Antigravity version sidecar missing or invalid") from ex
-    expected = {"format": LOG_ADAPTERS["antigravity"], "cli_version": ANTIGRAVITY_CLI_VERSION,
+    if not isinstance(manifest, dict):
+        raise ContractError("Antigravity version sidecar must be an object")
+    expected = {"format": LOG_ADAPTERS["antigravity"], "cli_version": manifest.get("cli_version"),
                 "sha256": sha_bytes(Path(path).read_bytes())}
-    if manifest != expected:
+    if manifest != expected or manifest.get("cli_version") not in ANTIGRAVITY_CLI_VERSIONS:
         raise ContractError("Antigravity format/version/hash does not match pinned transcript")
     rows, _ = read_transcript(path)
     if not rows:

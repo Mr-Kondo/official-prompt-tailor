@@ -22,10 +22,10 @@ class TestAntigravityAdapter(Base):
         self.rows[3]["tool_calls"][0]["args"]["TargetFile"] = str(self.run / "optimized.md")
         self.log = self.tmp / "native.jsonl"
 
-    def save(self):
+    def save(self, version="1.3.5"):
         self.log.write_text("".join(json.dumps(row) + "\n" for row in self.rows), encoding="utf-8")
         Path(str(self.log) + ".version.json").write_text(json.dumps({
-            "format": "antigravity-transcript-jsonl-v1", "cli_version": "1.3.5",
+            "format": "antigravity-transcript-jsonl-v1", "cli_version": version,
             "sha256": ev.sha_bytes(self.log.read_bytes())}), encoding="utf-8")
         return self.log
 
@@ -84,6 +84,9 @@ class TestAntigravityAdapter(Base):
                 manifest[field] = value
                 sidecar.write_text(json.dumps(manifest), encoding="utf-8")
                 self.assertIn("host_log_invalid", codes(self.verify(self.run, "live", log)))
+        for invalid in (None, [], "not-an-object"):
+            sidecar.write_text(json.dumps(invalid), encoding="utf-8")
+            self.assertIn("host_log_invalid", codes(self.verify(self.run, "live", log)))
         sidecar.unlink()
         self.assertIn("host_log_invalid", codes(self.verify(self.run, "live", log)))
 
@@ -135,3 +138,29 @@ class TestAntigravityAdapter(Base):
         events = ev.parse_host_log("antigravity", log)
         self.assertIn("rtk python3 evidence.py sources", [e["input"]["command"] for e in events if e.get("name") == "Bash"])
         self.assertIn(str(self.run / "optimized.md"), [e["input"]["file_path"] for e in events if e.get("name") == "Write"])
+
+    def test_observed_140_envelope_observes_read_before_generation(self):
+        self.rows = [json.loads(line) for line in
+                     (ROOT / "tests/fixtures/antigravity-1.4.0.jsonl").read_text(encoding="utf-8").splitlines()]
+        probe = self.tmp / "probe.txt"
+        probe.write_text("agy140 bounded probe alpha\nagy140 bounded probe beta\n", encoding="utf-8")
+        for row in self.rows:
+            if "content" in row:
+                row["content"] = row["content"].replace("/workspace/probe.txt", str(probe))
+            for call in row.get("tool_calls", []):
+                if call["name"] == "view_file":
+                    call["args"]["AbsolutePath"] = str(probe)
+                elif call["name"] == "write_to_file":
+                    call["args"]["TargetFile"] = str(self.run / "optimized.md")
+        log = self.save("1.4.0")
+        observed, first_write = ev.observed_read_lines(ev.parse_host_log("antigravity", log), probe,
+                                                      [self.run / "optimized.md"])
+        self.assertEqual(observed, {1, 2})
+        self.assertEqual(first_write, 3)
+        sidecar = Path(str(log) + ".version.json")
+        sidecar.unlink()
+        command = [sys.executable, str(ROOT / ".claude/skills/official-prompt-tailor/scripts/pin_antigravity_log.py"),
+                   "--log", str(log), "--cli-version", "1.4.0"]
+        completed = subprocess.run(command, capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(ev.parse_host_log("antigravity", log)[0]["name"], "Read")

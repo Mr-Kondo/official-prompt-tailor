@@ -7,13 +7,13 @@ import hashlib
 import json
 from pathlib import Path
 
-from evidence import ANTIGRAVITY_CLI_VERSION, LOG_ADAPTERS
+from evidence import ANTIGRAVITY_CLI_VERSIONS, LOG_ADAPTERS
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--log", type=Path, required=True)
-    parser.add_argument("--cli-version", choices=[ANTIGRAVITY_CLI_VERSION], required=True,
+    parser.add_argument("--cli-version", choices=ANTIGRAVITY_CLI_VERSIONS, required=True,
                         help="Version observed when this log was produced, not merely the current installed version")
     args = parser.parse_args()
     manifest = {"format": LOG_ADAPTERS["antigravity"], "cli_version": args.cli_version,
