@@ -15,6 +15,10 @@
 ## 制約
 
 - 読取りの観測ができるのは、Claude Code だけです。他の製品では、`verify` が `no_log_adapter_for_host` で `INCOMPLETE` になります。これは仕様で、ログを推測や自己申告で補いません。参照検証は最良でも `INCOMPLETE` のままですが、取得・引用・適用範囲・変更の結合は検査されます。
-- 他の製品のログを読む adapter は、未実装です。製品が公式にログ形式を示したら、`LOG_ADAPTER_HOSTS` と adapter を足します。
+- 他の製品のログを読む adapter は、未実装です。方針(2026-10-16 に決定): Codex・Antigravity のセッションログの形式を公式に説明した文書は、見つかっていません(第三者の解説と GitHub の議論だけ)。そのため、製品が公式に形式を示すのを待たず、**観測した形式を、版の名前をつけて固定して読む**ことを許します。条件は次のとおりです。
+  - 形式の版の名前(例: `codex-session-jsonl-v1`)と、観測した製品の版の範囲を、コードとこの文書に書く。
+  - 知らない形式・版は、推測せず `host_log_invalid` で止める。
+  - 公式の説明が出たら、その URL をここに記し、固定した形式との差を確かめる。
+  - adapter の完了条件は [Issue #8](https://github.com/Mr-Kondo/official-prompt-tailor/issues/8) にあります。
 - `--zip` と `--plugin` の条件は、[install.md](install.md) にあります。
 - 必要な接続先は、[README](../README.md#必要な接続先https) にあります。許可されないと、`fetch` は `blocked` になります。許可設定は、スキルから変更しません。
