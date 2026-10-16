@@ -935,7 +935,7 @@ class TestCodexAdapter(Base):
 
     def test_numbered_output_is_read_by_its_numbers(self):
         out = "\n".join(f"{n:6d}\t{l}" for n, l in enumerate(self.bl, 1)) + "\n"
-        self.assertEqual(self.check_log(self.codex_log(cmd=f"nl -ba {self.body}", out=out))["verdict"], "PASS_LIVE")
+        self.assertEqual(self.check_log(self.codex_log(cmd=f"nl -ba {self.body.as_posix()}", out=out))["verdict"], "PASS_LIVE")
 
 
 class TestLifecycleRouting(Base):
