@@ -2186,6 +2186,31 @@ def _secs(r):
     return (parse_ts(r["finished_at"]) - parse_ts(r["started_at"])).total_seconds()
 
 
+def validate_plan(plan):
+    """Validate a plan without creating evaluation outputs or loading cases."""
+    shape(plan, PLAN_F, "plan")
+    shape(plan["adoption"], ADOPT_F, "plan.adoption")
+    shape(plan["budget"], {"max_runs": (I, 1), "max_total_seconds": (NN, 1)}, "plan.budget")
+    shape(plan["repeats"], {"original": (I, 1), "optimized": (I, 1)}, "plan.repeats")
+    strs(plan["stop_conditions"], "stop_conditions")
+    strs(plan["execution_conditions"], "execution_conditions")
+    for m in plan["metrics"]:
+        shape(m, {"name": (S, 1), "direction": (S, 1), "method": (S, 1)}, "plan.metric")
+        if m["direction"] not in ("higher", "lower") or m["method"] not in ("code", "rubric"):
+            raise ContractError("plan.metric: bad direction/method")
+    for sc in plan["scorers"]:
+        shape(sc, {"scorer_id": (S, 1), "method": (S, 1), "rubric_version": (SN, 1), "calibration_ref": (SN, 1),
+                   "calibration_sha256": (SN, 1)}, "plan.scorer")
+    for c in plan["cases"]:
+        shape(c, {"case_id": (S, 1), "split": (S, 1)}, "plan.case")
+        if c["split"] not in ("development", "held-out"):
+            raise ContractError("plan.case: bad split")
+    uniq([c["case_id"] for c in plan["cases"]], "plan case_id")
+    if plan["schema_version"] != 1 or plan["adoption"]["primary_metric"] not in {m["name"] for m in plan["metrics"]}:
+        raise ContractError("plan: bad schema_version or primary_metric not declared")
+    parse_ts(plan["created_at"], "plan.created_at")
+
+
 def compare(run, plan_path, results_path, cases_path="evals/prompt-tailor-cases.jsonl", allow_mock=False):
     run = Path(run)
     now = utcnow()
@@ -2216,27 +2241,7 @@ def compare(run, plan_path, results_path, cases_path="evals/prompt-tailor-cases.
     plan_raw = Path(plan_path).read_bytes()
     try:
         plan = json.loads(plan_raw.decode("utf-8"))
-        shape(plan, PLAN_F, "plan")
-        shape(plan["adoption"], ADOPT_F, "plan.adoption")
-        shape(plan["budget"], {"max_runs": (I, 1), "max_total_seconds": (NN, 1)}, "plan.budget")
-        shape(plan["repeats"], {"original": (I, 1), "optimized": (I, 1)}, "plan.repeats")
-        strs(plan["stop_conditions"], "stop_conditions")
-        strs(plan["execution_conditions"], "execution_conditions")
-        for m in plan["metrics"]:
-            shape(m, {"name": (S, 1), "direction": (S, 1), "method": (S, 1)}, "plan.metric")
-            if m["direction"] not in ("higher", "lower") or m["method"] not in ("code", "rubric"):
-                raise ContractError("plan.metric: bad direction/method")
-        for sc in plan["scorers"]:
-            shape(sc, {"scorer_id": (S, 1), "method": (S, 1), "rubric_version": (SN, 1), "calibration_ref": (SN, 1),
-                       "calibration_sha256": (SN, 1)}, "plan.scorer")
-        for c in plan["cases"]:
-            shape(c, {"case_id": (S, 1), "split": (S, 1)}, "plan.case")
-            if c["split"] not in ("development", "held-out"):
-                raise ContractError("plan.case: bad split")
-        uniq([c["case_id"] for c in plan["cases"]], "plan case_id")
-        if plan["schema_version"] != 1 or plan["adoption"]["primary_metric"] not in {m["name"] for m in plan["metrics"]}:
-            raise ContractError("plan: bad schema_version or primary_metric not declared")
-        parse_ts(plan["created_at"], "plan.created_at")
+        validate_plan(plan)
         raw_rows = load_jsonl(results_path)
         for r in raw_rows:
             shape(r, ROW_F, "result row")
@@ -2289,7 +2294,7 @@ def compare(run, plan_path, results_path, cases_path="evals/prompt-tailor-cases.
         cv.append("recorded runs exceed the planned budget")
     scorers = {(s["scorer_id"], s["rubric_version"], s["calibration_sha256"]): s for s in plan["scorers"]}
     for s in plan["scorers"]:
-        if s["method"] != "code" and (not s["calibration_sha256"] or not s["rubric_version"]):
+        if s["method"] not in ("code", "human") and (not s["calibration_sha256"] or not s["rubric_version"]):
             inc.append(f"scorer {s['scorer_id']} is uncalibrated")
         if s["calibration_ref"]:
             try:

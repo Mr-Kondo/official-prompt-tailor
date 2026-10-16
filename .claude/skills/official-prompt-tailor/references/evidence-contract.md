@@ -146,3 +146,5 @@ Antigravity では、ログを作ったときに `agy --version` を確認する
 ## 評価計画と結果 (compare)
 
 `eval-plan.json`、`eval-results.jsonl`、`evals/prompt-tailor-cases.jsonl` の構造は `scripts/evidence.py` の `PLAN_F` `ROW_F` `CASE_F` を参照。計画は実行前に固定し、結果の各行に `plan_sha256` を結ぶ。`development` 事例は採用判断に使わず、`held-out` 事例だけで採用基準を判定する。
+
+`compare` の `scorers[].method=human` はモデル校正ファイルを必要としません。人の確認・採点を代行したことにはなりません。人の採点でもラベルを隠した比較、逆順での再確認、提示位置の変更が必要です。モデル等の非コード・非人手採点には引き続き校正ハッシュと rubric_version が必要です。`validate_plan(plan)` は結果を書き出さず計画の構造だけを検証します。

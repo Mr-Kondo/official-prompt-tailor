@@ -1,0 +1,73 @@
+{
+  "plan_sha256": "b38a0c8f44e31597b742446f622f30970a3e6b0fba1e4f32eefbf47dac335249",
+  "cases_sha256": "de2cc618ade686e5eeb54f023a27aa785c3bce9b20a891540ca9dafb653d0e0e",
+  "cases": [
+    {
+      "case_id": "dev-date-bug",
+      "split": "development",
+      "status": "pending-review",
+      "reviewed_by": null,
+      "reviewed_at": null,
+      "requirements_valid": null,
+      "rubric_valid": null,
+      "notes": ""
+    },
+    {
+      "case_id": "dev-ambiguous",
+      "split": "development",
+      "status": "pending-review",
+      "reviewed_by": null,
+      "reviewed_at": null,
+      "requirements_valid": null,
+      "rubric_valid": null,
+      "notes": ""
+    },
+    {
+      "case_id": "dev-number-altered",
+      "split": "development",
+      "status": "pending-review",
+      "reviewed_by": null,
+      "reviewed_at": null,
+      "requirements_valid": null,
+      "rubric_valid": null,
+      "notes": ""
+    },
+    {
+      "case_id": "dev-ui-misapplied",
+      "split": "development",
+      "status": "pending-review",
+      "reviewed_by": null,
+      "reviewed_at": null,
+      "requirements_valid": null,
+      "rubric_valid": null,
+      "notes": ""
+    },
+    {
+      "case_id": "held-user-signup",
+      "split": "held-out",
+      "status": "pending-review",
+      "reviewed_by": null,
+      "reviewed_at": null,
+      "requirements_valid": null,
+      "rubric_valid": null,
+      "notes": ""
+    },
+    {
+      "case_id": "held-negation",
+      "split": "held-out",
+      "status": "pending-review",
+      "reviewed_by": null,
+      "reviewed_at": null,
+      "requirements_valid": null,
+      "rubric_valid": null,
+      "notes": ""
+    }
+  ],
+  "scorer_choice": "human",
+  "scorer_id": null,
+  "target_surface": null,
+  "model_id": null,
+  "conditions_accepted": null,
+  "development_locked_at": null,
+  "held_out_opened_at": null
+}

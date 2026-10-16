@@ -293,6 +293,8 @@ python3 tools/maintain.py audit --run outputs/official-prompt-tailor/<run-id> --
 
 ## 効果測定
 
+Issue #7 の実行前準備は [人手レビュー資料と計画候補](../evals/issue-7/README.md) を参照してください。6件の確認、採点者と条件の確定、最終計画の先行コミットが済むまで実験は開始しません。
+
 対象の事例は、`evals/prompt-tailor-cases.jsonl` です。開発用 4 件と未見用 2 件があり、負例と境界例を含みます。
 
 - 負例: 要件改変、UI への API 機能の誤適用。
