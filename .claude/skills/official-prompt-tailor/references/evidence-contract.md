@@ -126,6 +126,8 @@ sources --run RUN [--host-log LOG]                                          # ru
 
 `execution_host` は `claude-code` / `codex` / `chatgpt-work` / `antigravity` / `claude-cowork`。読取りの adapter があるのは `claude-code`(`claude-code-transcript-jsonl-v1`)と `codex`(`codex-rollout-jsonl-v1`、`session_meta.cli_version` が `0.155.1` か `0.162.*` のときだけ。ほかの版は `host_log_invalid`)と `antigravity`(`antigravity-transcript-jsonl-v1`、agy 1.3.5 の観測形式。版と SHA-256 の sidecar が必須)で、他のホストでは `no_log_adapter_for_host`(総合 `INCOMPLETE`)になる。ログを渡しても解釈しない。
 
+Antigravity では、ログを作ったときに `agy --version` を確認する。完了した `transcript_full.jsonl` を run の外に保存し、`python3 <skill-dir>/scripts/pin_antigravity_log.py --log <絶対パス> --cli-version 1.3.5` で `<ログ>.version.json` を作る。同梱 helper は版・形式名・SHA-256 を記録し、上書きしない。これは運用者による申告で、真正性の認証ではない。過去ログの版を、現在のインストール版から推定して書かない。`--host-log` には sidecar ではなくログ本文のパスを渡す。
+
 信頼境界: ログのパスは運用者が指定する。署名や独立収集元の認証はしない。運用者が独立した収集元を確認できない場合は `--host-log` を付けず、総合 `INCOMPLETE` を受け入れる。
 
 ## 校正記録 (assess)

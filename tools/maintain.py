@@ -987,6 +987,8 @@ def transcript_texts(path, host="claude-code"):
     rows, own = ev.read_transcript(path)
     if host == "codex":
         return codex_transcript_texts(rows)
+    if host == "antigravity":
+        return ev.antigravity_transcript_texts(path)
     prompt = answer = ""
     handed = False  # once the report is handed back, text after it is not the answer
     for _, d in rows:
@@ -1062,7 +1064,8 @@ def audit(run, transcript):
     gen_paths = [run / "optimized.md", run / "recommendations.json"]
     writes = [e["seq"] for e in events if e["kind"] == "use" and (
         (e["name"] in ("Write", "Edit") and ev._resolves_to(e["input"].get("file_path"), gen_paths))
-        or (e["name"] == "Bash" and any(g.name in str(e["input"].get("command", "")) for g in gen_paths)))]
+        or (e["name"] == "Bash" and any(g.name in str(e["input"].get("command", "")) for g in gen_paths))
+        or (e["name"] == "CodexExec" and any(g.name in e["input"]["script"] for g in gen_paths)))]
     first_write = min(writes) if writes else None
     fetch, drift, rules, verify, sources = (ran(n) for n in ("fetch", "drift", "rules", "verify", "sources"))
     where = f"(record lines: fetch {fetch}, drift {drift}, rules {rules}, first write {first_write}, verify {verify}, sources {sources})"

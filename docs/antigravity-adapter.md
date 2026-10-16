@@ -20,13 +20,9 @@ Run this command from the repository root with an existing completed transcript.
 - `write_to_file`, `replace_file_content` and `multi_replace_file_content` normalize to `Write` with `TargetFile`. `run_command.CommandLine` normalizes to `Bash`. Unsupported tools retain an opaque conservative barrier if their arguments name a generated artifact. Shell reads are not counted. Read results must precede the first generation **attempt**, including a denied write, matching the existing observer's conservative boundary.
 - Conversation text and thinking do not contribute to read evidence. No provenance stronger than the supplied local transcript is claimed.
 
-## Audit integration hooks (parallel audit integration)
+## Audit integration
 
-The parallel Codex audit work (`b6115cf`) can integrate these hooks after merge:
-
-1. The parent audit already dispatches tool events using `ev.parse_host_log(execution_host, transcript)`. Antigravity yields the existing `Read`/`Write`/`Bash` event shapes; `Bash.input.command` contains the actual `run_command.CommandLine` for the audit's existing command detector. Opaque `CodexExec` barriers have empty `cmds` and must not be treated as actual executed commands. To retain the same conservative generation boundary in audit, include their `input.script` artifact-name match in the audit `writes` list, or normalize only those opaque barriers to non-command write events. This is distinct from actual `Bash` command evidence.
-2. In `transcript_texts(path, host="claude-code")`, add an Antigravity host branch returning `ev.antigravity_transcript_texts(path)` for `(first_user_input, last_non_tool_planner_text)`. It validates the same version sidecar and excludes thinking, tool output, truncated text and error records.
-3. Keep `ev.sources_report(run, transcript)` as the read observer. The synthetic integration test verifies `PASS_LIVE` and `CONSISTENT`; this is not a genuine skill run.
+`maintain.py audit` dispatches the same native tool events and uses `antigravity_transcript_texts` to read user requests and the final planner answer, excluding thinking and tool output. Native `run_command` events supply command evidence; opaque unsupported tools can establish a conservative generation barrier, but cannot stand in for executed commands. Synthetic tests cover the integrated audit; a real complete skill execution remains blocked as described below.
 
 ## Genuine runtime evidence and limit
 
@@ -34,4 +30,4 @@ On 2026-10-17 JST a separate bounded `agy --print` invocation was allowed 45 sec
 
 The adapter parsed that **actual native transcript** and observed lines `[1, 2]` before generation attempt step `3`. The requested generated file does not exist. agy exited `0` and reported `SUCCESS` with `denied_actions`; those outer statuses do not prove tool success. The exact log hash, executable hash, version, conversation ID and measured outcomes are in [the runtime evidence record](../tests/fixtures/antigravity-runtime-probe.json). The raw private transcript is not committed. [The fixture](../tests/fixtures/antigravity-1.3.5.jsonl) is synthetic and follows the observed envelope; it is not represented as the actual transcript.
 
-**Full independent skill execution, `audit` PASS and real `sources --host-log` CONSISTENT remain unverified.** The permission block prevents the required generated run artifacts, and audit dispatch is reserved for the parallel integration. Completion of #8's full independent-run acceptance criterion must wait for a permitted runtime and the audit integration. Unit tests and CI cannot substitute for that result.
+**Full independent skill execution, `audit` PASS and real `sources --host-log` CONSISTENT remain unverified.** The permission block prevents the required generated run artifacts, although audit dispatch is implemented and tested with synthetic records. Completion of #8's full independent-run acceptance criterion must wait for a permitted runtime and the audit integration. Unit tests and CI cannot substitute for that result.

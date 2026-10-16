@@ -14,19 +14,19 @@ class TestAntigravityAdapter(Base):
         self.run, _ = self.good_run("agy", execution_host="antigravity")
         self.body = self.run / self.entry(self.run)["body_path"]
         self.rows = [json.loads(line) for line in
-                     (ROOT / "tests/fixtures/antigravity-1.3.5.jsonl").read_text().splitlines()]
+                     (ROOT / "tests/fixtures/antigravity-1.3.5.jsonl").read_text(encoding="utf-8").splitlines()]
         self.rows[1]["tool_calls"][0]["args"]["AbsolutePath"] = str(self.body)
-        lines = self.body.read_text().splitlines()
+        lines = self.body.read_text(encoding="utf-8").splitlines()
         self.rows[2]["content"] = (f"File Path: `file://{self.body}`\nShowing lines 1 to {len(lines)}\n"
                                    + "\n".join(f"{n}: {line}" for n, line in enumerate(lines, 1)))
         self.rows[3]["tool_calls"][0]["args"]["TargetFile"] = str(self.run / "optimized.md")
         self.log = self.tmp / "native.jsonl"
 
     def save(self):
-        self.log.write_text("".join(json.dumps(row) + "\n" for row in self.rows))
+        self.log.write_text("".join(json.dumps(row) + "\n" for row in self.rows), encoding="utf-8")
         Path(str(self.log) + ".version.json").write_text(json.dumps({
             "format": "antigravity-transcript-jsonl-v1", "cli_version": "1.3.5",
-            "sha256": ev.sha_bytes(self.log.read_bytes())}))
+            "sha256": ev.sha_bytes(self.log.read_bytes())}), encoding="utf-8")
         return self.log
 
     def observed(self):
@@ -62,7 +62,7 @@ class TestAntigravityAdapter(Base):
 
     def test_partial_output_counts_only_complete_visible_matching_lines(self):
         self.rows[2]["content"] = (f"File Path: `file://{self.body}`\nShowing lines 1 to 3\n"
-                                   + "1: " + self.body.read_text().splitlines()[0] + "\n2: cut")
+                                   + "1: " + self.body.read_text(encoding="utf-8").splitlines()[0] + "\n2: cut")
         self.assertEqual(self.observed()[0], {1})
 
     def test_read_after_write_and_no_generation(self):
@@ -80,9 +80,9 @@ class TestAntigravityAdapter(Base):
         for field, value in (("cli_version", "1.3.6"), ("format", "unknown"), ("sha256", "0" * 64)):
             with self.subTest(field):
                 self.save()
-                manifest = json.loads(sidecar.read_text())
+                manifest = json.loads(sidecar.read_text(encoding="utf-8"))
                 manifest[field] = value
-                sidecar.write_text(json.dumps(manifest))
+                sidecar.write_text(json.dumps(manifest), encoding="utf-8")
                 self.assertIn("host_log_invalid", codes(self.verify(self.run, "live", log)))
         sidecar.unlink()
         self.assertIn("host_log_invalid", codes(self.verify(self.run, "live", log)))
@@ -114,11 +114,11 @@ class TestAntigravityAdapter(Base):
         sidecar.unlink()
         command = [sys.executable, str(ROOT / ".claude/skills/official-prompt-tailor/scripts/pin_antigravity_log.py"),
                    "--log", str(log), "--cli-version", "1.3.5"]
-        completed = subprocess.run(command, capture_output=True, text=True)
+        completed = subprocess.run(command, capture_output=True, text=True, encoding="utf-8")
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(self.verify(self.run, "live", log)["verdict"], "PASS_LIVE")
         before = sidecar.read_bytes()
-        completed = subprocess.run(command, capture_output=True, text=True)
+        completed = subprocess.run(command, capture_output=True, text=True, encoding="utf-8")
         self.assertNotEqual(completed.returncode, 0)
         self.assertEqual(sidecar.read_bytes(), before)
         command[-1] = "1.3.6"

@@ -996,6 +996,34 @@ class TestAudit(Base):
         log.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
         self.assertEqual(maintain.audit(self.run, log)["verdict"], "PASS")
 
+    def test_antigravity_audit_uses_native_tool_events_and_final_text(self):
+        inp = ev.load_json(self.run / "input.json")
+        inp["execution_host"] = "antigravity"
+        ev.write_json(self.run / "input.json", inp)
+        log = self.record()
+        native = []
+        for row in map(json.loads, log.read_text(encoding="utf-8").splitlines()):
+            for block in row["message"]["content"]:
+                record = {"step_index": len(native), "status": "DONE"}
+                if block["type"] == "text":
+                    record.update(type="USER_INPUT" if row["type"] == "user" else "PLANNER_RESPONSE", content=block["text"])
+                elif block["type"] == "tool_use":
+                    inp, name = block["input"], block["name"]
+                    tool, args = ("run_command", {"CommandLine": inp["command"]}) if name == "Bash" else (
+                        ("view_file", {"AbsolutePath": inp["file_path"]}) if name == "Read" else ("write_to_file", {"TargetFile": inp["file_path"]}))
+                    record.update(type="PLANNER_RESPONSE", tool_calls=[{"name": tool, "args": args}])
+                else:
+                    content = block["content"]
+                    if native[-1].get("tool_calls", [{}])[0].get("name") == "view_file":
+                        lines = self.body.read_text(encoding="utf-8").splitlines()
+                        content = f"File Path: `file://{self.body}`\nShowing lines 1 to {len(lines)}\n" + "\n".join(f"{n}: {line}" for n, line in enumerate(lines, 1))
+                    record.update(type="GENERIC", content=content)
+                native.append(record)
+        log.write_text("\n".join(json.dumps(r) for r in native) + "\n", encoding="utf-8")
+        ev.write_json(Path(str(log) + ".version.json"), {"format": ev.LOG_ADAPTERS["antigravity"], "cli_version": "1.3.5", "sha256": ev.sha_file(log)})
+        rep = maintain.audit(self.run, log)
+        self.assertEqual(rep["verdict"], "PASS", rep)
+
     def codex_record(self, steps=None):
         old = ev.load_json(self.run / "input.json")
         old["execution_host"] = "codex"
@@ -1007,7 +1035,7 @@ class TestAudit(Base):
             for b in d["message"]["content"]:
                 if b["type"] == "tool_use":
                     arg = b["input"]
-                    command = arg.get("command", "cat " + str(arg.get("file_path", "")))
+                    command = arg["command"] if "command" in arg else "cat " + Path(arg["file_path"]).as_posix()
                     if b["name"] == "Write":
                         command = "python3 gen.py > " + arg["file_path"]
                     rows.append({"type": "response_item", "payload": {"type": "custom_tool_call", "name": "exec", "call_id": b["id"],
