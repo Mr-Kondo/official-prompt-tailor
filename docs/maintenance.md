@@ -86,8 +86,9 @@ python3 tools/maintain.py rereview --run outputs/official-prompt-tailor/<run-id>
 
 - `rereview` は、規則が審査された本文(規則に記録したハッシュと同じハッシュの、いまの本文)を、`outputs/reviewed-bodies/<source_id>/<sha256>.txt` に残します。`outputs/` は未追跡(`.gitignore`)です。変わっていない間に実行するだけで、残ります(`--write` は要りません)。
 - 旧本文は、次の順に探します。残した本文、`outputs/` の過去の run(`snapshots/<source_id>/body.txt`)、`--old <ディレクトリ>`(繰り返せる)。見つかった本文でも、SHA-256 が規則に記録したものと違えば、旧本文として使いません。
-- 残るのは、その clone の中だけです。新しい clone や別の機械には、ありません。毎週の `watch` は、残しません(通信して比べるだけです)。旧本文がないときは `old_body_unavailable` になり、新しい本文で引用の前後を読んで判断します。
-- そのため、本文が変わる前に、一度 `rereview` を実行しておくと、次の変更を比べられます。登録済みの規則の旧本文は、この変更の時点では、どこにも残っていません(過去の run があれば、そこから探せます)。
+- 残るのは、その clone の中だけです。新しい clone や別の機械には、ありません。毎週の `watch` は、`tools/maintain.py keep` で、規則が審査された本文を GitHub Actions のキャッシュに残します([自動実行](#自動実行github-actions))。キャッシュは、Actions の外からは取り出せません。`watch` のキャッシュにある本文を手元で使うには、手元で `rereview` を実行して残すか、`--old` で渡します。旧本文がないときは `old_body_unavailable` になり、新しい本文で引用の前後を読んで判断します。
+- `keep` は、各資料の本文が、規則に記録したハッシュと同じ間に、その本文を残します。規則のどれも参照しなくなった本文(再審査で規則のハッシュが新しくなったあとの、古い本文)は消します。`--source` で絞ったときは消しません。ページが変わった後は、残した本文を上書きしません。旧本文を持つ資料が無いときは、`PARTIAL`(終了コード 2)と、その資料を報告します。
+- 手元で本文が変わる前に、一度 `rereview`(または `keep`)を実行しておくと、次の変更を比べられます。登録済みの規則の旧本文は、`keep` を最初に実行した時点より前のものは、どこにも残っていません(過去の run があれば、そこから探せます)。
 - 残した本文を消しても、規則や registry は壊れません。比べられなくなるだけです。
 
 ### 新しい資料を見つける
@@ -110,11 +111,11 @@ python3 tools/maintain.py discover
 `developers.openai.com` と `ai.google.dev` には `llms.txt` がないので、`sitemap.xml` から新しいページを探します。
 
 - `<urlset>` なら、その `<loc>` を、`<sitemapindex>` なら、`<loc>` が指す子の sitemap(同じホストの https のものだけ、最大 30 件)を読んで、`<loc>` を集めます。ほかのホストの子は読まず、`skipped` に残します。子の中の索引は、たどりません。
-- sitemap にはページの題がないので、パスの最後の部分(`prompt-engineering` → `prompt engineering`)を題の代わりにします。`keywords`・`exclude` は、題とパスに当てます。言語ごとのページが並ぶサイトでは、`scope` と `exclude` で絞ってください。
-- XML は構文解析せず、`<loc>` の中身だけを取り出します。DOCTYPE や実体参照は展開しません。内容の種類は `application/xml`・`text/xml`・`text/plain`、文字コードは UTF-8 だけです。gzip は読めません。1 つの応答は 5 MB までです(`support.claude.com` の sitemap は、これを超えて読めませんでした)。
+- sitemap にはページの題がないので、パスの最後の部分(`prompt-engineering` → `prompt engineering`)を題の代わりにします。`keywords`・`exclude` は、題とパスに当てます。同じページが言語ごとに `?hl=de` のようなクエリ付きで並ぶサイトでは、クエリを除いた同じページを 1 件にまとめ、クエリのない住所があればそれを使います。
+- XML は構文解析せず、`<loc>` の中身だけを取り出します。DOCTYPE や実体参照は展開しません。内容の種類は `application/xml`・`text/xml`・`text/plain`、文字コードは UTF-8 だけです。gzip は読めません。1 つの応答は 40 MB までです(`SITEMAP_MAX_BYTES`)。ページの 5 MB より大きいのは、`ai.google.dev` の sitemap が 18.7 MB あるためで、この上限は sitemap を読む間だけ使います。
 - 読めなかった子がある一覧は、`status` が `partial` で、`error` に子の URL と理由が出ます。読めたページの候補は、そのまま出ます。候補がなく、`partial` か `blocked` の一覧があるときは `INCOMPLETE` です。
 - **403 などの拒否は、そのまま報告します。** 取得し直すのは、`llms.txt` と同じく 1 回だけで、同じ URL に同じ方法です。ボット検査を避ける工夫はしません。拒否される時間帯は、`INCOMPLETE` のまま残ります。
-- 2026-10-15 の時点で、`openai-developers-sitemap` と `gemini-api-sitemap` の URL(`/sitemap.xml`)と `scope` は、登録時の推定です。この 2 つのホストには、実行環境のネットワーク許可がなく、取得を確かめていません。初回は手元で `discover` を実行し、`status` と `pages` を見て、`scope` を直してください。`platform.claude.com` と `code.claude.com` の `sitemap.xml` では、読取りを確かめました(それぞれ 3,937 件、2,713 件)。
+- 2026-10-15 に、GitHub Actions の `watch` を手動実行して、実機で確かめました。`developers.openai.com` の sitemap は `robots.txt` が示す `/sitemap-index.xml` で(`/sitemap.xml` は 404)、`ai.google.dev` の子 sitemap は 18.7 MB、6,900 件のうち 4,541 件が `/gemini-api/docs/` 以下でした(大半が `?hl=` の言語違い)。登録の URL と上限は、これに合わせて直しました。`platform.claude.com` と `code.claude.com` の `sitemap.xml` では、読取りを確かめました(それぞれ 3,937 件、2,713 件)。
 
 ### 登録案を作る
 
@@ -141,11 +142,13 @@ python3 tools/maintain.py review                          # 人がまだ審査�
 python3 tools/maintain.py review --rule <rule_id> --source <source_id> --limit 10
 ```
 
-- **対話端末でだけ動きます。** 標準入力と標準出力が端末で、環境変数 `CI` がないときだけです。スクリプトやエージェントのツール呼出し、CI では、何も書かずに終了コード 2 で終わります。
+- **対話端末でだけ動きます。** 標準入力と標準出力が端末で、環境変数 `CI`・`GITHUB_ACTIONS`・`CLAUDECODE`・`CLAUDE_CODE_ENTRYPOINT` のどれも設定されていないときだけです。スクリプトやエージェントのツール呼出し、CI では、何も書かずに終了コード 2 で終わります。これは、プロセスの起動のされ方の検査です。擬似端末(pty)を使うプログラムが、人の代わりに入力することは、防げません(独立レビューで再現しました)。
 - 規則ごとに、資料の URL、対象、使える前提、使えない場合、意味、許される変更、引用、いまの本文の該当行(前後 5 行)を出します。本文が審査したときと変わっていれば、そう表示します。引用が本文にないときは、記録できません。
 - 「審査した人の名前」を入力した規則にだけ、`reviewer_id` を `human:<名前>` として記録します(確認で `y`)。空は飛ばし、`q` は終了です。1 件ずつ書き込むので、途中で止めても、記録済みの分は残ります。
 - 記録するのは、`source_body_sha256`(見せた本文のハッシュ)、`reviewed_at`、`reviewer_id` と、`tools/human-reviews.json` への 1 行です。この記録がない `human:` の規則は、テスト(`test_no_rule_claims_a_human_review_that_nobody_has_made`)が拒否します。エージェントが `registry.json` を直接書き換えて、人の審査を名乗るのを防ぐためです。
 - 入力した名前が本人かどうかは、確かめられません。端末で入力されたことを、記録しているだけです。コミットの作者と合わせて読んでください。
+- 台帳(`tools/human-reviews.json`)は署名のない平文で、registry と一緒に書き換えれば、テストを通せます。台帳を先に書き、registry を書けなかったときは台帳の追記を取り消します。`adopt` は、spec の `reviewer_id` が `human:` で始まるものを拒否します(人の審査を記録するのは `review` だけです)。
+- registry を書く直前に、読んだときのバイト列と比べます。人が入力している間などに registry が変わっていたら、何も書かずに止まります(`adopt`・`rereview --write`・`review` に共通)。
 - 人の審査を記録したら、`python3 tools/maintain.py docs --write` で、README と `docs/trust-boundary.md` の件数を直します。
 
 ### 新しい資料を足す(`adopt`)
@@ -226,6 +229,8 @@ python3 tools/maintain.py docs --write
 
 `.github/workflows/watch.yml` が、毎週月曜の 03:17(UTC)に `drift` と `discover` を実行します。Actions の画面から、手動でも実行できます。
 
+- `drift` のあと、`keep` が、規則が審査された本文を `outputs/reviewed-bodies` に残し、そのディレクトリを `actions/cache` が次の週へ引き継ぎます。結果は Summary に出るだけで、Issue にはなりません。キャッシュは、既定ブランチの実行で保存したものだけが、次の定期実行で使えます。ブランチから手動実行した分は、`main` の実行からは見えません。7 日間使われないキャッシュは Actions が消すので、週ごとの実行が保っています。
+- 手動実行のとき、`report_only` を選ぶと、Issue を作らず、編集もしません。報告だけが Summary に出ます。
 - 人の判断が要る結果(`drift` の `DRIFT`、`discover` の `CANDIDATES`)だけが、`drift` または `discover` のラベルを付けた Issue になります。開いている Issue があれば、本文を最新の報告に置き換えます。
 - `INCOMPLETE`(取得できない資料や一覧がある)は、実行の Summary に出るだけで、Issue にはなりません。通信エラーは、再実行で解消することがあります。
 - 再審査(または既読化)が済んだら、Issue を閉じます。閉じた Issue は開き直しません。次の週にまだ残っていれば、新しい Issue を立てます。

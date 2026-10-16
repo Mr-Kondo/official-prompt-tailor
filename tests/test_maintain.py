@@ -6,6 +6,7 @@ import json
 import shutil
 import sys
 import tempfile
+import time
 import unittest
 import urllib.parse
 from pathlib import Path
@@ -222,6 +223,49 @@ class TestDiscover(MaintainBase):
         row = json.loads(self.tool("discover")[1])["indexes"][0]
         self.assertIn("4 child sitemaps beyond the first 30 were not read", row["error"])
         self.assertEqual(len(set(self.calls) - {SITEMAP_URL}), maintain.MAX_CHILD_SITEMAPS)
+
+    def test_a_sitemap_over_the_page_limit_is_read_under_its_own_limit_and_the_limit_is_put_back(self):
+        self.sitemap_config()
+        big = "<urlset><!--" + "x" * (ev.MAX_BYTES + 1000) + "--><url><loc>https://docs.example.com/docs/prompting-big</loc></url></urlset>"
+        self.responses[SITEMAP_URL] = (200, XML, big.encode("utf-8"))
+        before = ev.MAX_BYTES
+        row = json.loads(self.tool("discover")[1])["indexes"][0]
+        self.assertEqual((row["status"], [c["key"] for c in row["candidates"]]), ("live", ["docs.example.com/docs/prompting-big"]))
+        self.assertEqual(ev.MAX_BYTES, before)  # a page is still held to the page limit
+        with mock.patch.object(maintain, "SITEMAP_MAX_BYTES", 1000):
+            row = json.loads(self.tool("discover")[1])["indexes"][0]
+        self.assertEqual((row["status"], row["error"], ev.MAX_BYTES), ("blocked", "response_too_large", before))
+
+    def test_a_sitemap_built_to_make_the_reader_slow_is_read_in_linear_time(self):
+        self.sitemap_config()
+        hostile = "<urlset><loc>" + " " * 20000 + "<url><loc>https://docs.example.com/docs/prompting-ok</loc></url></urlset>"  # an unclosed <loc> with 20,000 spaces
+        self.responses[SITEMAP_URL] = (200, XML, hostile.encode("utf-8"))
+        started = time.monotonic()
+        row = json.loads(self.tool("discover")[1])["indexes"][0]
+        self.assertLess(time.monotonic() - started, 2)  # cubic time took minutes at this size
+        self.assertEqual(row["status"], "live")
+
+    def test_a_body_of_open_brackets_does_not_make_llms_txt_parsing_quadratic(self):
+        started = time.monotonic()
+        self.assertEqual(maintain.LINK.findall("[" * 200000), [])
+        self.assertLess(time.monotonic() - started, 2)
+        self.assertEqual(maintain.LINK.findall("[A title](https://x.example/a)"), [("A title", "https://x.example/a")])
+
+    def test_the_answers_of_child_sitemaps_are_not_kept_while_the_next_ones_are_read(self):
+        self.sitemap_config()
+        self.serve_sitemaps()
+        seen = []
+        real = maintain.shutil.rmtree
+        with mock.patch.object(maintain.shutil, "rmtree", lambda path, **kw: (seen.append(Path(path).name), real(path, **kw))):
+            json.loads(self.tool("discover")[1])
+        self.assertEqual([n for n in seen if n.startswith("child-")], ["child-1", "child-2"])  # (the temporary directory itself is removed with the same call)
+
+    def test_a_page_in_many_languages_is_listed_once_at_its_plain_address(self):
+        self.sitemap_config()
+        langs = ("<urlset>" + "".join(f"<url><loc>https://docs.example.com/docs/prompting-guide{q}</loc></url>" for q in ("?hl=de", "?hl=ko", "", "?hl=ar")) + "</urlset>")
+        self.responses[SITEMAP_URL] = (200, XML, langs.encode("utf-8"))
+        row = json.loads(self.tool("discover")[1])["indexes"][0]
+        self.assertEqual([c["url"] for c in row["candidates"]], ["https://docs.example.com/docs/prompting-guide"])
 
     def test_the_format_of_an_index_is_checked(self):
         self.write_config(indexes=[{"index_id": "example-sitemap", "format": "rss", "url": SITEMAP_URL, "scope": ["/docs/"]}])
@@ -483,10 +527,12 @@ class TestAdopt(AdoptBase):
         self.assertEqual(ev.REGISTRY_PATH.read_bytes(), self.before)
 
     def test_the_spec_itself_must_be_well_formed(self):
-        for name, spec in {"unknown key": self.spec(reviewer="x"), "no reviewer": self.spec(reviewer_id=" "),
-                           "wrong version": self.spec(schema_version=2), "no sources": self.spec(sources=[])}.items():
+        # spec() writes one file, so each case is built where it is used: building them all first would test only the last one
+        cases = {"unknown key": dict(reviewer="x"), "no reviewer": dict(reviewer_id=" "), "wrong version": dict(schema_version=2), "no sources": dict(sources=[]),
+                 "claims a person": dict(reviewer_id="human:Mallory"), "claims a person, other case": dict(reviewer_id=" Human:Mallory")}
+        for name, over in cases.items():
             with self.subTest(name):
-                self.assertEqual(self.tool("adopt", "--spec", spec)[0], 1)
+                self.assertEqual(self.tool("adopt", "--spec", self.spec(**over))[0], 1)
         self.assertEqual(self.tool("adopt", "--spec", str(self.tmp / "missing.json"))[0], 2)
 
     def test_a_registry_not_in_the_writers_layout_is_refused_before_anything_is_fetched(self):
@@ -650,6 +696,56 @@ class TestRereview(RereviewBase):
         self.assertIsNone(maintain.stored_body("doc-a", ev.sha_bytes(b"other")))
 
 
+class TestKeep(RereviewBase):
+    """`keep` is what the weekly job runs, so that the day a page changes there is an old body to compare with."""
+    def stored(self, sid):
+        return sorted(p.name for p in (maintain.STORE / sid).glob("*.txt")) if (maintain.STORE / sid).is_dir() else []
+
+    def test_it_keeps_the_body_the_rules_were_reviewed_against_once(self):
+        rep = maintain.keep(only=self.SRC)
+        self.assertEqual((rep["verdict"], rep["bodies_kept"], rep["without_old_body"]), ("COMPLETE", 2, []))
+        self.assertEqual(self.stored("doc-a"), [self.sha_now("doc-a") + ".txt"])
+        self.assertEqual(maintain.keep(only=self.SRC)["bodies_kept"], 0)
+        self.assertEqual(ev.REGISTRY_PATH.read_bytes(), self.before)
+
+    def test_a_page_that_changed_since_the_last_keep_does_not_replace_the_old_body(self):
+        maintain.keep(only=self.SRC)
+        old = self.stored("doc-a")
+        self.change_page(*TestRereview.FAR)
+        rep = maintain.keep(only=self.SRC)
+        self.assertEqual((rep["verdict"], rep["bodies_kept"], self.stored("doc-a")), ("COMPLETE", 0, old))
+        self.assertEqual({r["status"] for r in rep["sources"]}, {"page_changed"})
+        self.assertEqual(self.look()["verdict"], "READY_TO_STAMP")  # and rereview finds that old body
+
+    def test_a_page_that_was_never_kept_and_has_changed_leaves_the_old_body_missing(self):
+        self.change_page(*TestRereview.FAR)
+        rep = maintain.keep(only=self.SRC)
+        self.assertEqual((rep["verdict"], len(rep["without_old_body"])), ("PARTIAL", 2))
+        code, out, err = self.tool("keep", *self.SRC_ARGS)
+        self.assertEqual((code, json.loads(out)["verdict"]), (2, "PARTIAL"))
+        self.assertIn("no old body for 2", err)
+
+    def test_a_page_that_cannot_be_fetched_is_reported_and_keeps_what_was_kept(self):
+        maintain.keep(only=self.SRC)
+        self.responses[A_URL] = (500, HTML, b"")
+        rep = maintain.keep(only=["doc-a"])
+        self.assertEqual(([r["status"] for r in rep["sources"]], rep["verdict"]), (["not_fetched"], "COMPLETE"))
+
+    def test_bodies_no_rule_refers_to_are_dropped_only_when_no_source_filter_is_given(self):
+        maintain.keep(only=self.SRC)
+        stray = maintain.STORE / "doc-a" / ("0" * 64 + ".txt")
+        stray.write_text("old\n", encoding="utf-8")
+        maintain.keep(only=self.SRC)
+        self.assertTrue(stray.exists())  # a partial look prunes nothing
+        rep = maintain.keep()
+        self.assertEqual((rep["bodies_pruned"], stray.exists()), (1, False))
+        self.assertEqual(self.stored("doc-a"), [self.sha_now("doc-a") + ".txt"])
+
+    def test_an_unknown_source_is_refused(self):
+        with self.assertRaises(ev.ContractError):
+            maintain.keep(only=["nope"])
+
+
 class TestRereviewJudgement(unittest.TestCase):
     RULE = {"source_excerpt": "Use short sentences."}
     BODY = "# Style\n\nIntro line.\n\nUse short sentences.\n\nNext line.\n\n## Other\n\nUnrelated text.\n"
@@ -719,6 +815,11 @@ class TestReview(RereviewBase):
                 self.assertFalse(maintain.interactive())
             with mock.patch.dict("os.environ", {}, clear=True):
                 self.assertTrue(maintain.interactive())
+            for name in ("GITHUB_ACTIONS", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT"):  # a terminal opened by an agent or by CI is not a person's
+                with self.subTest(name), mock.patch.dict("os.environ", {name: "1"}, clear=True):
+                    self.assertFalse(maintain.interactive())
+            with mock.patch.dict("os.environ", {"CI": ""}, clear=True):
+                self.assertTrue(maintain.interactive())
 
     def test_a_name_that_is_typed_and_confirmed_is_recorded_against_the_page_that_was_shown(self):
         rep, shown = self.go(["Kondo", "y", ""])
@@ -777,6 +878,32 @@ class TestReview(RereviewBase):
         self.change_page(*TestRereview.FAR)
         self.look(write=True)  # the page changed and nobody read it again: what a machine renews is a machine's review
         self.assertEqual(self.rules_of()["rule-verify"]["reviewer_id"], maintain.MACHINE_REVIEWER)
+
+    def test_the_ledger_is_written_before_the_registry_and_taken_back_if_the_registry_cannot_be_written(self):
+        real = maintain.replace_registry
+
+        def fail(text, loaded):
+            raise OSError("disk full")
+
+        with mock.patch.object(maintain, "replace_registry", fail), self.assertRaises(OSError):
+            self.go(["Kondo", "y"])
+        self.assertEqual((maintain.human_ledger(), ev.REGISTRY_PATH.read_bytes()), ([], self.before))  # no entry without a rule, no rule without an entry
+        order = []
+        with mock.patch.object(maintain, "replace_registry", lambda t, l: (order.append(("registry", maintain.human_ledger())), real(t, l))):
+            self.go(["Kondo", "y", ""])
+        self.assertEqual([len(ledger) for _, ledger in order], [1])  # when the registry is written the ledger already has the entry
+
+    def test_a_registry_that_changed_while_a_person_was_typing_is_not_written_over(self):
+        def ask(prompt):
+            if "名前" in prompt:  # an edit made while the person is deciding
+                ev.REGISTRY_PATH.write_bytes(ev.REGISTRY_PATH.read_bytes() + b"\n")
+                return "Kondo"
+            return "y"
+
+        with mock.patch.object(maintain, "interactive", lambda: True), self.assertRaisesRegex(ev.ContractError, "changed since it was read"):
+            maintain.review(ask=ask, say=lambda s: None, **self.ONLY)
+        self.assertEqual(maintain.human_ledger(), [])
+        self.assertNotIn(b"human:Kondo", ev.REGISTRY_PATH.read_bytes())
 
     def test_unknown_rules_and_a_damaged_ledger_are_reported(self):
         with mock.patch.object(maintain, "interactive", lambda: True):

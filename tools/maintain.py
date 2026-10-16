@@ -14,12 +14,14 @@ edit registry.json, and only adopt and rereview with --write: which rules a page
 the spec (docs/maintenance.md); adopt checks the spec against the live page and records who reviewed. Standard library only.
 """
 import argparse
+import contextlib
 import difflib
 import html
 import itertools
 import json
 import os
 import re
+import shutil
 import sys
 import tempfile
 import time
@@ -32,7 +34,7 @@ sys.path.insert(0, str(HERE.parent / ".claude" / "skills" / "official-prompt-tai
 import evidence as ev  # noqa: E402
 
 CONFIG, SEEN = HERE / "discovery.json", HERE / "discovery-seen.json"
-LINK = re.compile(r"\[([^\]]*)\]\((https?://[^)\s]+)\)")
+LINK = re.compile(r"\[([^\]\n]{0,300})\]\((https?://[^)\s]+)\)")  # a title is one short line: an unbounded [^\]]* is quadratic on a body of "["
 INDEX_F = {"index_id": (str, 1), "url": (str, 1), "scope": (list, 1), "keywords": (list, 0), "exclude": (list, 0), "format": (str, 0)}
 FORMATS = ("llms", "sitemap")  # what the index is: an llms.txt (the default) or a sitemap.xml
 
@@ -108,12 +110,24 @@ def candidates(index, default_keywords, pages, skip_keys):
     return found
 
 
+@contextlib.contextmanager
+def response_limit(size):
+    """ev.fetch_live refuses an answer over ev.MAX_BYTES (5 MB), which is right for a page. A sitemap of a big site is larger (18.7 MB for
+    ai.google.dev, 2026-10), so it is read under a higher limit, for the length of the one call."""
+    old, ev.MAX_BYTES = ev.MAX_BYTES, size
+    try:
+        yield
+    finally:
+        ev.MAX_BYTES = old
+
+
 def fetch_index(index, tmp, process=None):
     """(entry, the index's text or None): an llms.txt, or with `process` (sitemap_body) a sitemap. A failed answer is looked at once more, as
     drift does: one answer can be a dropped connection or a CDN node mid-deploy. Each look gets its own directory because fetch_live never
     overwrites a snapshot. A refusal (HTTP 403, a bot check) is reported as it is: nothing here tries to get past it."""
     for look in ("look-1", "look-2"):
-        e = ev.fetch_live(index_source(index), tmp / look, process)
+        with response_limit(SITEMAP_MAX_BYTES) if process else contextlib.nullcontext():
+            e = ev.fetch_live(index_source(index), tmp / look, process)
         if e["status"] == "live":
             return e, ev.read_text(tmp / look / e["body_path"])
         if look == "look-1":
@@ -123,8 +137,9 @@ def fetch_index(index, tmp, process=None):
 
 # A sitemap.xml lists a site's pages the way an llms.txt does, for the sites that have no llms.txt. An index of sitemaps points to others.
 SITEMAP_TYPES = ("application/xml", "text/xml", "text/plain")
-SITEMAP_LOC = re.compile(r"<loc>\s*([^<]*?)\s*</loc>", re.I)
+SITEMAP_LOC = re.compile(r"<loc>([^<]*)</loc>", re.I)  # stripped afterwards: `\s*([^<]*?)\s*` backtracks cubically on <loc> + spaces + no closing tag
 MAX_CHILD_SITEMAPS = 30  # child sitemaps read per index; more are reported, not read
+SITEMAP_MAX_BYTES = 40 * 1024 * 1024  # one sitemap answer; a site's page limit for a sitemap is 50 MB uncompressed
 
 
 def sitemap_body(src, raw, content_type):
@@ -143,7 +158,7 @@ def sitemap_body(src, raw, content_type):
     kind = "sitemapindex" if re.search(r"<sitemapindex\b", text) else ("urlset" if re.search(r"<urlset\b", text) else None)
     if kind is None:
         raise ev.Blocked("not_a_sitemap")
-    locs = [html.unescape(x) for x in SITEMAP_LOC.findall(text)]
+    locs = [html.unescape(x.strip()) for x in SITEMAP_LOC.findall(text)]
     if not locs:
         raise ev.Blocked("sitemap_without_locations")
     return "\n".join([f"# {kind}"] + locs) + "\n"
@@ -160,7 +175,9 @@ def sitemap_pages(index, locs):
     for url in locs:
         key = page_key(url)
         if urllib.parse.urlsplit(url).scheme in ("http", "https") and key.split("/", 1)[0] == host:
-            pages.setdefault(key, (re.sub(r"[-_]+", " ", urllib.parse.unquote(key.rsplit("/", 1)[-1])), re.sub(r"^http://", "https://", url)))
+            known = pages.get(key)
+            if known is None or ("?" in known[1] and "?" not in url):  # one page in many languages (?hl=de): the plain address stands for it
+                pages[key] = (re.sub(r"[-_]+", " ", urllib.parse.unquote(key.rsplit("/", 1)[-1])), re.sub(r"^http://", "https://", url))
     return pages
 
 
@@ -182,6 +199,7 @@ def read_sitemap(index, tmp):
         problems.append(f"{len(same) - MAX_CHILD_SITEMAPS} child sitemaps beyond the first {MAX_CHILD_SITEMAPS} were not read")
     for n, url in enumerate(same[:MAX_CHILD_SITEMAPS], 1):
         ce, ctext = fetch_index({**index, "index_id": f"{index['index_id']}-{n}", "url": url}, tmp / f"child-{n}", sitemap_body)
+        shutil.rmtree(tmp / f"child-{n}", ignore_errors=True)  # the answer (up to 40 MB, twice) is in ctext now: thirty of them would not fit on a small runner
         if ctext is None:
             problems.append(f"{url}: {ce['error']}")
             continue
@@ -418,12 +436,20 @@ def wire(reg, source, rules):
     return sorted(purposes)
 
 
+class Loaded(dict):
+    """The registry as load_for_edit read it, with the bytes it was read from: replace_registry refuses to write over a file that has changed since."""
+    raw = b""
+
+
 def load_for_edit():
     """The registry, after checking that dump_registry would write it back byte for byte: an edit then changes only what it means to change."""
     reg, _ = ev.load_registry()
-    if dump_registry(reg).encode("utf-8") != ev.REGISTRY_PATH.read_bytes():
+    raw = ev.REGISTRY_PATH.read_bytes()
+    if dump_registry(reg).encode("utf-8") != raw:
         raise ev.ContractError("registry.json is not in the layout dump_registry writes (one compact record per line): put it back first")
-    return reg
+    loaded = Loaded(reg)
+    loaded.raw = raw
+    return loaded
 
 
 def checked_registry_text(reg):
@@ -435,10 +461,15 @@ def checked_registry_text(reg):
     return dump_registry(reg).encode("utf-8")
 
 
-def replace_registry(text):
+def replace_registry(text, loaded):
+    """Write `text` over registry.json, if the file is still what `loaded` was read from: a look at the network or a person's typing takes minutes,
+    and an edit made meanwhile would otherwise be undone without a word."""
+    if ev.REGISTRY_PATH.read_bytes() != loaded.raw:
+        raise ev.ContractError("registry.json changed since it was read; nothing was written")
     tmp = ev.REGISTRY_PATH.with_name(ev.REGISTRY_PATH.name + ".tmp")
     tmp.write_bytes(text)
     os.replace(tmp, ev.REGISTRY_PATH)
+    loaded.raw = text
 
 
 def adopt(spec_path, write=False):
@@ -446,7 +477,9 @@ def adopt(spec_path, write=False):
     spec = ev.load_json(spec_path)
     ev.shape(spec, SPEC_F, "spec")
     if spec["schema_version"] != 1 or not spec["reviewer_id"].strip():
-        raise ev.ContractError('spec: schema_version must be 1 and reviewer_id must say who reviewed ("human:<name>" for a person)')
+        raise ev.ContractError("spec: schema_version must be 1 and reviewer_id must say who reviewed")
+    if spec["reviewer_id"].strip().lower().startswith(ev.HUMAN_REVIEWER):
+        raise ev.ContractError("spec: reviewer_id must not start with human: (adopt does not record a person's review; `review` does, from a terminal)")
     if not spec["sources"]:
         raise ev.ContractError("spec: no sources")
     now, rows = ev.iso(ev.utcnow()), []
@@ -465,7 +498,7 @@ def adopt(spec_path, write=False):
                      "rules": [r["rule_id"] for r in rules], "wired": wire(reg, source, rules)})
     text = checked_registry_text(reg)
     if write:
-        replace_registry(text)
+        replace_registry(text, reg)
     return {"schema_version": 1, "written": write, "reviewer_id": spec["reviewer_id"], "sources": rows,
             "registry": {"sources": len(reg["sources"]), "rules": len(reg["rules"]), "bytes": len(text)}}
 
@@ -504,6 +537,41 @@ def keep_body(source_id, sha, body):
     with open(path, "w", encoding="utf-8", newline="\n") as f:
         f.write(body)
     return True
+
+
+def keep(only=(), prune=True):
+    """Keep, for every source, the body its rules were reviewed against, as long as the page still has it; drop kept bodies that no rule refers to.
+    Run on a schedule, this means the old body exists on the day a page changes (rereview needs it then, not before). Writes nothing but STORE."""
+    reg = ev.load_registry()[0]
+    ids = {s["source_id"] for s in reg["sources"]}
+    if set(only) - ids:
+        raise ev.ContractError(f"unknown source ids {sorted(set(only) - ids)}")
+    wanted = {}
+    for r in reg["rules"]:
+        wanted.setdefault(r["source_id"], set()).add(r["source_body_sha256"])
+    rows, kept = [], 0
+    for sid, o in ev._observe_live(reg["sources"], only).items():
+        if o.body is None:
+            status = "not_fetched"
+        elif o.sha256 not in wanted.get(sid, ()):
+            status = "page_changed"
+        else:
+            fresh = keep_body(sid, o.sha256, o.body)
+            kept, status = kept + fresh, "kept" if fresh else "already_kept"
+        rows.append({"source_id": sid, "status": status, "error": o.error})
+    pruned = 0
+    if prune and not only and STORE.is_dir():
+        for path in sorted(STORE.glob("*/*.txt")):
+            if path.stem not in wanted.get(path.parent.name, ()):
+                path.unlink()
+                pruned += 1
+        for d in sorted(STORE.glob("*")):
+            if d.is_dir() and not any(d.iterdir()):
+                d.rmdir()
+    missing = [{"source_id": sid, "source_body_sha256": sha} for sid, shas in sorted(wanted.items()) if not only or sid in only
+               for sha in sorted(shas) if not (STORE / sid / f"{sha}.txt").is_file()]
+    return {"schema_version": 1, "checked_at": ev.iso(ev.utcnow()), "verdict": "COMPLETE" if not missing else "PARTIAL",
+            "bodies_kept": kept, "bodies_pruned": pruned, "without_old_body": missing, "sources": rows}
 
 
 def clip(line, width=160):
@@ -618,7 +686,7 @@ def rereview(only=(), rule_ids=(), run=None, old_dirs=(), context=CONTEXT_LINES,
                 o = observed[row["source_id"]]
                 rules[row["rule_id"]].update(source_body_sha256=o.sha256, reviewed_at=now, reviewer_id=reviewer)
                 row["renewed"] = True
-        replace_registry(checked_registry_text(reg))
+        replace_registry(checked_registry_text(reg), reg)
         kept += sum(keep_body(r["source_id"], observed[r["source_id"]].sha256, observed[r["source_id"]].body) for r in rows if r["renewed"])
     pending = [r for r in rows if not r["renewed"]]
     if pending:
@@ -633,8 +701,13 @@ def rereview(only=(), rule_ids=(), run=None, old_dirs=(), context=CONTEXT_LINES,
 
 
 # ---------------------------------------------------------------- review (a person, at a terminal)
+AUTOMATION_ENV = ("CI", "GITHUB_ACTIONS", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT")  # set by CI and by Claude Code; a person's own shell has none of them
+
+
 def interactive():
-    return sys.stdin.isatty() and sys.stdout.isatty() and not os.environ.get("CI")
+    """A terminal on both ends, in a process that is not run by CI or by an agent. This checks how the process was started, not who is typing:
+    a pty can be driven by a program, which the ledger and the tests around it do not prevent either (docs/trust-boundary.md)."""
+    return sys.stdin.isatty() and sys.stdout.isatty() and not any(os.environ.get(k) for k in AUTOMATION_ENV)
 
 
 def human_ledger():
@@ -713,9 +786,15 @@ def review(rule_ids=(), only=(), run=None, context=CONTEXT_LINES, limit=None, as
         except ev.ContractError:
             rule.update(before)
             raise
-        replace_registry(text)
-        entries = human_ledger() + [{"rule_id": rule["rule_id"], "reviewer_id": rule["reviewer_id"], "reviewed_at": rule["reviewed_at"], "source_body_sha256": sha}]
+        old_entries = human_ledger()  # the ledger first: a rule with a human reviewer_id and no entry would fail the guard, an entry without a rule would not
+        entries = old_entries + [{"rule_id": rule["rule_id"], "reviewer_id": rule["reviewer_id"], "reviewed_at": rule["reviewed_at"], "source_body_sha256": sha}]
         LEDGER.write_text(json.dumps(entries, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        try:
+            replace_registry(text, reg)
+        except Exception:
+            rule.update(before)
+            LEDGER.write_text(json.dumps(old_entries, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            raise
         keep_body(sid, sha, body)
         recorded.append(rule["rule_id"])
         say(f"記録しました: {rule['rule_id']} ← {rule['reviewer_id']}")
@@ -998,6 +1077,9 @@ def main(argv=None):
     rr.add_argument("--accept", action="append", default=[])
     rr.add_argument("--reviewer")
     rr.add_argument("--write", action="store_true")
+    kp = sub.add_parser("keep")
+    kp.add_argument("--source", action="append", default=[])
+    kp.add_argument("--no-prune", action="store_true")
     rv = sub.add_parser("review")
     rv.add_argument("--source", action="append", default=[])
     rv.add_argument("--rule", action="append", default=[])
@@ -1028,6 +1110,10 @@ def main(argv=None):
             return ev._emit("rereview", 0 if rep["verdict"] in ("CURRENT", "STAMPED") else 2, rep,
                             f"{rep['verdict']} {len(rep['rules'])} rules (unchanged around the excerpt {n('context_unchanged')}, changed {n('context_changed')}, "
                             f"no old body {n('old_body_unavailable')}, excerpt gone {n('excerpt_missing')}), " + ("written" if rep["written"] else "nothing written"))
+        if args.cmd == "keep":
+            rep = keep(args.source, not args.no_prune)
+            return ev._emit("keep", 0 if rep["verdict"] == "COMPLETE" else 2, rep,
+                            f"{rep['verdict']} kept {rep['bodies_kept']}, pruned {rep['bodies_pruned']}, no old body for {len(rep['without_old_body'])}")
         if args.cmd == "review":
             rep = review(args.rule, args.source, args.run, args.context, args.limit)
             return ev._emit("review", 0, rep, f"{len(rep['recorded'])} recorded, {rep['skipped']} skipped, {rep['remaining']} not looked at")

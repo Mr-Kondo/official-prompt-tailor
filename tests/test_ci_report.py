@@ -42,6 +42,16 @@ class TestRender(unittest.TestCase):
         self.assertNotIn("|", md)
 
 
+    def test_kept_names_the_sources_that_cannot_be_compared_and_is_never_an_issue(self):
+        kept = {"schema_version": 1, "checked_at": "2026-10-19T03:20:00Z", "verdict": "PARTIAL", "bodies_kept": 3, "bodies_pruned": 1,
+                "without_old_body": [{"source_id": "a", "source_body_sha256": "0123456789abcdef" * 4}],
+                "sources": [{"source_id": "a", "status": "page_changed", "error": None}, {"source_id": "b", "status": "not_fetched", "error": "http_403"}]}
+        md = ci_report.render("kept", kept)
+        self.assertIn("`a`(`0123456789ab…`)", md)
+        self.assertIn("取得できなかった資料: `b`(http_403)", md)
+        self.assertEqual(ci_report.KINDS["kept"][1], None)
+
+
 class FakeGitHub:
     """Just enough of `gh issue ...` to look at the issues afterwards instead of at the commands sent."""
 

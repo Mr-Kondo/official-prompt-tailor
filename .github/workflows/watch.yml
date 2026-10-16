@@ -7,6 +7,11 @@ on:
   schedule:
     - cron: "17 3 * * 1"  # Mondays 03:17 UTC
   workflow_dispatch:
+    inputs:
+      report_only:
+        description: "Print the reports only; do not open or edit issues"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -23,13 +28,26 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
+      # The body each rule was reviewed against, so that `maintain.py rereview` has an old body the day a page changes. A cache, not an
+      # artifact and not a commit: a page's full text is not published. Every run saves a new entry; the newest one is restored.
+      - uses: actions/cache@v6
+        with:
+          path: outputs/reviewed-bodies
+          key: reviewed-bodies-${{ github.run_id }}
+          restore-keys: reviewed-bodies-
       # Exit 2 is DRIFT or INCOMPLETE (the report says which). Any other failure is a broken setup and fails the job.
       - shell: bash
         run: python3 -I .claude/skills/official-prompt-tailor/scripts/evidence.py drift > result.json || [ "$?" -eq 2 ]
       - shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 -I .github/scripts/ci_report.py drift result.json --issue | tee -a "$GITHUB_STEP_SUMMARY"
+          ISSUE: ${{ inputs.report_only && ' ' || '--issue' }}
+        run: python3 -I .github/scripts/ci_report.py drift result.json $ISSUE | tee -a "$GITHUB_STEP_SUMMARY"
+      # Exit 2 is PARTIAL: some rule has no old body yet (the page changed before it was kept, or could not be fetched this time).
+      - shell: bash
+        run: python3 -I tools/maintain.py keep > kept.json || [ "$?" -eq 2 ]
+      - shell: bash
+        run: python3 -I .github/scripts/ci_report.py kept kept.json | tee -a "$GITHUB_STEP_SUMMARY"
 
   discover:
     runs-on: ubuntu-24.04
@@ -44,4 +62,5 @@ jobs:
       - shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 -I .github/scripts/ci_report.py discover result.json --issue | tee -a "$GITHUB_STEP_SUMMARY"
+          ISSUE: ${{ inputs.report_only && ' ' || '--issue' }}
+        run: python3 -I .github/scripts/ci_report.py discover result.json $ISSUE | tee -a "$GITHUB_STEP_SUMMARY"
