@@ -857,7 +857,7 @@ class TestExecutionHosts(Base):
                 rep = self.verify(run, "live", log)  # a Claude Code-format log is offered to every host
                 if host == "claude-code":
                     self.assertEqual(rep["verdict"], "PASS_LIVE", rep["errors"])
-                elif host == "codex":  # its own adapter reads it: a Claude Code log is another format, so refused
+                elif host in ("codex", "antigravity"):  # its own adapter reads it: a Claude Code log is another format, so refused
                     self.assertEqual(codes(rep), {"host_log_invalid"})
                 else:
                     self.assertEqual(rep["verdict"], "INCOMPLETE")
@@ -1910,8 +1910,8 @@ class TestSourcesRun(Base):
         self.assertEqual(rep["verdict"], "CONSISTENT")
         self.assertEqual((rep["selected"][0]["read"]["status"], rep["selected"][0]["read"]["reason"]), ("unavailable", "no_host_log"))
         run, log = self.good_run("run-agy", execution_host="antigravity")
-        rep = ev.sources_report(run, log)  # a Claude Code log is offered to a host whose logs are not understood: not parsed
-        self.assertEqual((rep["verdict"], rep["selected"][0]["read"]["reason"]), ("CONSISTENT", "no_log_adapter_for_host"))
+        rep = ev.sources_report(run, log)  # a Claude Code log must be refused by the Antigravity adapter
+        self.assertEqual((rep["verdict"], rep["selected"][0]["read"]["reason"]), ("INCONSISTENT", "host_log_invalid"))
 
     def test_reads_that_do_not_show_the_cited_lines_are_incomplete_and_a_forged_log_is_inconsistent(self):
         partial = self.write_log(self.run, lines=[1, 3], path=self.tmp / "partial.jsonl")

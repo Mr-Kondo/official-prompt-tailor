@@ -33,7 +33,8 @@ REGISTRY_PATH = SKILL_DIR / "references" / "registry.json"
 RUBRIC_PATH = SKILL_DIR / "references" / "review-rubric.md"
 
 HOSTS = ("claude-code", "codex", "chatgpt-work", "antigravity", "claude-cowork")  # products that can run this skill
-LOG_ADAPTERS = {"claude-code": "claude-code-transcript-jsonl-v1", "codex": "codex-rollout-jsonl-v1"}  # host -> pinned log format
+ANTIGRAVITY_CLI_VERSION = "1.3.5"
+LOG_ADAPTERS = {"antigravity": "antigravity-transcript-jsonl-v1", "claude-code": "claude-code-transcript-jsonl-v1", "codex": "codex-rollout-jsonl-v1"}  # host -> pinned log format
 LOG_ADAPTER_HOSTS = tuple(LOG_ADAPTERS)  # hosts whose session logs the read-observation adapter understands
 CODEX_CLI_VERSIONS = ("0.155.1", "0.162.")  # the Codex cli_version prefixes codex-rollout-jsonl-v1 was observed on (CLI exec; Desktop)
 TARGET_IDS = ("chatgpt", "chatgpt-work", "codex", "claude", "claude-cowork", "claude-code", "gemini",
@@ -1262,7 +1263,119 @@ _TRUNCATED = re.compile(r"…\d+ tokens truncated…")
 
 
 def parse_host_log(host, path):
-    return parse_codex_rollout(path) if host == "codex" else parse_transcript(path)
+    parsers = {"codex": parse_codex_rollout, "claude-code": parse_transcript, "antigravity": parse_antigravity_transcript}
+    if host not in parsers:
+        raise ContractError("unsupported host log adapter")
+    return parsers[host](path)
+
+
+def parse_antigravity_transcript(path):
+    """Observed agy 1.3.5 transcript; version sidecar is an operator assertion, not authentication."""
+    try:
+        manifest = json.loads(Path(str(path) + ".version.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError) as ex:
+        raise ContractError("Antigravity version sidecar missing or invalid") from ex
+    expected = {"format": LOG_ADAPTERS["antigravity"], "cli_version": ANTIGRAVITY_CLI_VERSION,
+                "sha256": sha_bytes(Path(path).read_bytes())}
+    if manifest != expected:
+        raise ContractError("Antigravity format/version/hash does not match pinned transcript")
+    rows, _ = read_transcript(path)
+    if not rows:
+        raise ContractError("empty Antigravity transcript")
+    events, previous = [], -1
+    for _, record in rows:
+        if not isinstance(record, dict) or type(record.get("step_index")) is not int or record["step_index"] <= previous:
+            raise ContractError("Antigravity step indices must be strictly increasing integers")
+        previous = record["step_index"]
+        if record.get("type") not in ("USER_INPUT", "PLANNER_RESPONSE", "GENERIC") or record.get("status") not in ("DONE", "ERROR"):
+            raise ContractError("unsupported Antigravity record type/status")
+    for offset, (_, record) in enumerate(rows):
+        if record["type"] == "PLANNER_RESPONSE":
+            events.extend(_antigravity_tool_events(record, rows[offset + 1:offset + 2]))
+    return events
+
+
+def _antigravity_tool_events(record, following):
+    calls = record.get("tool_calls", [])
+    if not isinstance(calls, list) or any(not isinstance(call, dict) or not isinstance(call.get("args"), dict) or not isinstance(call.get("name"), str) for call in calls):
+        raise ContractError("invalid Antigravity tool calls")
+    events = []
+    for call in calls:
+        seq, args, name = record["step_index"], call["args"], call["name"]
+        if name == "view_file" and (not isinstance(args.get("AbsolutePath"), str) or not os.path.isabs(args["AbsolutePath"])):
+            raise ContractError("invalid Antigravity read path")
+        # Preserve actual commands for maintain.audit; opaque tools remain conservative write barriers.
+        if name == "run_command":
+            command = args.get("CommandLine")
+            if not isinstance(command, str):
+                raise ContractError("invalid Antigravity command")
+            events.append({"kind": "use", "seq": seq, "id": str(seq), "name": "Bash", "input": {"command": command}})
+        elif name in ("write_to_file", "replace_file_content", "multi_replace_file_content"):
+            if not isinstance(args.get("TargetFile"), str):
+                raise ContractError("invalid Antigravity write path")
+            events.append({"kind": "use", "seq": seq, "id": str(seq), "name": "Write", "input": {"file_path": args["TargetFile"]}})
+        elif name != "view_file":
+            events.append({"kind": "use", "seq": seq, "id": str(seq), "name": "CodexExec",
+                           "input": {"script": json.dumps(args), "cmds": [], "cwd": ""}})
+        if name != "view_file" or len(calls) != 1 or record.get("truncated_fields") or record["status"] != "DONE":
+            continue
+        events.extend(_antigravity_read_events(record, following))
+    return events
+
+
+def _antigravity_read_events(record, following):
+    if not following:
+        return []
+    response = following[0][1]
+    seq, args = record["step_index"], record["tool_calls"][0]["args"]
+    text, path = response.get("content"), args.get("AbsolutePath")
+    if (response["type"] != "GENERIC" or response["step_index"] != seq + 1 or response["status"] != "DONE"
+            or response.get("error") or response.get("truncated_fields") or not isinstance(text, str)
+            or not isinstance(path, str) or not os.path.isabs(path)):
+        return []
+    numbered = _antigravity_numbered_output(text, path)
+    return [{"kind": "use", "seq": seq, "id": "read-" + str(seq), "name": "Read", "input": {"file_path": path}},
+            {"kind": "result", "seq": response["step_index"], "id": "read-" + str(seq), "error": False, "text": numbered}]
+
+
+def _antigravity_numbered_output(text, path):
+    # Bind the output envelope to the requested file before accepting any numbered body lines.
+    match = re.search(r"^Showing lines (\d+) to (\d+)$", text, re.M)
+    if not match or f"File Path: `file://{path}`" not in text[:match.start()].splitlines():
+        return ""
+    start, end = map(int, match.groups())
+    if start < 1 or end < start:
+        return ""
+    lines = text[match.end():].splitlines()
+    numbered = []
+    for line in lines:
+        if line.startswith(f"{start}: "):
+            break
+    else:
+        return ""
+    first = lines.index(line)
+    for number, line in enumerate(lines[first:first + end - start + 1], start):
+        prefix = f"{number}: "
+        if not line.startswith(prefix):
+            break
+        numbered.append(f"{number}\t{line[len(prefix):]}")
+    return "\n".join(numbered)
+
+
+def antigravity_transcript_texts(path):
+    """Audit hook: first user input and last non-tool planner text; never return thinking or tool output."""
+    parse_antigravity_transcript(path)
+    rows, _ = read_transcript(path)
+    prompt, answer = "", ""
+    for _, record in rows:
+        text = record.get("content")
+        if not isinstance(text, str) or record["status"] != "DONE" or record.get("truncated_fields"):
+            continue
+        if record["type"] == "USER_INPUT" and not prompt:
+            prompt = text
+        elif record["type"] == "PLANNER_RESPONSE" and not record.get("tool_calls"):
+            answer = text
+    return prompt, answer
 
 
 def parse_codex_rollout(path):

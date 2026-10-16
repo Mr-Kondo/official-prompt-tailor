@@ -14,10 +14,10 @@
 
 ## 制約
 
-- 読取りの観測ができるのは、Claude Code と Codex だけです(Codex は未検証の版固定 adapter。下記)。他の製品では、`verify` が `no_log_adapter_for_host` で `INCOMPLETE` になります。これは仕様で、ログを推測や自己申告で補いません。参照検証は最良でも `INCOMPLETE` のままですが、取得・引用・適用範囲・変更の結合は検査されます。
+- 読取りの adapter があるのは、Claude Code・Codex・Antigravity です。Antigravity は agy 1.3.5 の観測形式を固定した実装で、版とハッシュを記した sidecar が必要です([antigravity-adapter.md](antigravity-adapter.md))。独立したスキルの通し検証は未完了です。他の製品では、`verify` が `no_log_adapter_for_host` で `INCOMPLETE` になります。これは仕様で、ログを推測や自己申告で補いません。参照検証は最良でも `INCOMPLETE` のままですが、取得・引用・適用範囲・変更の結合は検査されます。
 - Codex の adapter(`codex-rollout-jsonl-v1`、Codex `cli_version` が `0.155.1`(`codex exec`)と `0.162.*`(Desktop)、[Issue #9](https://github.com/Mr-Kondo/official-prompt-tailor/issues/9))は、`~/.codex/sessions` の rollout JSONL を読みます。読取りに数えるのは、`exec` のスクリプトに `exec_command` が 1 つだけあり、そのコマンドが `cat` / `nl` / `head` / `tail` / `sed -n` / `bat` / `rtk read` の単純な 1 つで、本文のパスを名指すものです(`;` `&` `|` `<` `>` `$` を含むコマンド、複数コマンドのスクリプトは数えない。出力をコマンドに割り当てられないため)。出力は、本文の行と一致する連続した行だけを数え、切り詰めの印(`…N tokens truncated…`)の前後の行と、2 か所に当てはまる行は数えません。Windows 形式のパス(`\`)は読めず、数え落とします。生成の書き込みは、スクリプトに `optimized.md` / `recommendations.json` の名前があれば検出します。実際の `codex exec` 0.155.1 で本文を `cat` させた記録を読んで、見えた行(出力が途中で切られ、334 行のうち 51 行)だけが数えられることを確かめました。**別の Codex でスキルの手順を通した記録は、まだありません**([independent-runs.md](independent-runs.md) に未記入)。
-- 公式の文書の確認(2026-10-16): openai/codex リポジトリの `docs/` の一覧と、developers.openai.com を直接見ました。rollout の形式を説明した文書はありません。公式に説明があるのは `codex exec --json` の標準出力のイベント([Non-interactive mode](https://developers.openai.com/codex/noninteractive))だけで、これは `~/.codex/sessions` のファイルとは別の形式なので、読みません。
-- Antigravity など、ほかの製品のログを読む adapter は、未実装です。方針(2026-10-16 に決定): Codex・Antigravity のセッションログの形式を公式に説明した文書は、見つかっていません(第三者の解説と GitHub の議論だけ)。そのため、製品が公式に形式を示すのを待たず、**観測した形式を、版の名前をつけて固定して読む**ことを許します。条件は次のとおりです。
+- 公式の文書の確認(2026-10-16): openai/codex リポジトリの `docs/` の一覧と、developers.openai.com の検索結果を確認した範囲では、rollout の形式を説明した文書は見つかりませんでした。全ファイルを調べた結果ではありません。確認できた公式の説明は `codex exec --json` の標準出力のイベント([Non-interactive mode](https://developers.openai.com/codex/noninteractive))だけで、これは `~/.codex/sessions` のファイルとは別の形式なので、読みません。
+- Antigravity の adapter は `antigravity-transcript-jsonl-v1`、対応製品版は `agy 1.3.5` だけです。実ランタイムの合成本文の読取りは確認済みですが、書込みは権限拒否で、通し検証は未完了です([観測結果と制限](antigravity-adapter.md))。方針(2026-10-16 に決定): 既存調査の範囲では、Codex・Antigravity のセッションログの形式を公式に説明した文書は見つかっていません。文書が存在しないという判断ではありません。そのため、製品が公式に形式を示すのを待たず、**観測した形式を、版の名前をつけて固定して読む**ことを許します。条件は次のとおりです。
   - 形式の版の名前(例: `codex-rollout-jsonl-v1`)と、観測した製品の版の範囲を、コードとこの文書に書く。
   - 知らない形式・版は、推測せず `host_log_invalid` で止める。
   - 公式の説明が出たら、その URL をここに記し、固定した形式との差を確かめる。
