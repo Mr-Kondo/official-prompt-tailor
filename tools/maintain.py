@@ -516,6 +516,8 @@ def adopt(spec_path, write=False):
 # snapshots of past runs under outputs/ (or --old) are looked at too.
 STORE = ROOT / "outputs" / "reviewed-bodies"
 CONTEXT_LINES = 5  # lines before and after the excerpt that must also be unchanged for a rule to be renewed without a person reading the page
+# Words that, added to the section of an excerpt (outside the lines around it), may change what the rule means: a person reads them before renewal.
+RISK_WORDS = re.compile(r"deprecat|no longer|obsolete|legacy|removed|discontinu|not recommended|do not use|don't use|instead of|非推奨|廃止|使用しない|使わない|推奨されません", re.I)
 MACHINE_REVIEWER = "tools/maintain.py rereview (excerpt and surrounding lines unchanged; mechanical; not human)"
 LEDGER, LEDGER_F = HERE / "human-reviews.json", {"rule_id": (str, 1), "reviewer_id": (str, 1), "reviewed_at": (str, 1), "source_body_sha256": (str, 1)}
 
@@ -597,10 +599,27 @@ def neighbourhood(body, excerpt, context):
     return {"at": [first + 1, last + 1], "heading": heading, "count": body.count(excerpt), "lines": lines[max(0, first - context):last + context + 1]}
 
 
+def section_lines(body, excerpt):
+    """The lines of the section the excerpt is in: from the heading above it to the next heading of the same or a higher level."""
+    lines = body.split("\n")
+    first = body.count("\n", 0, body.find(excerpt))
+    start = next((i for i in range(first, -1, -1) if lines[i].startswith("#")), 0)
+    level = len(lines[start]) - len(lines[start].lstrip("#")) if lines[start].startswith("#") else 0
+    end = next((i for i in range(first + 1, len(lines)) if lines[i].startswith("#") and len(lines[i]) - len(lines[i].lstrip("#")) <= level), len(lines))
+    return lines[start:end]
+
+
+def section_risks(old_body, new_body, excerpt):
+    """Lines added to the excerpt's section that hold a risk word. The window of `context` lines misses them when they sit further away."""
+    old, new = set(section_lines(old_body, excerpt)), section_lines(new_body, excerpt)
+    return [clip(x) for x in new if x not in old and RISK_WORDS.search(x)]
+
+
 def judge(rule, new_body, old_body, context):
     """How a drifted rule stands. class: excerpt_missing (it cannot be renewed) | old_body_unavailable | context_changed (a person reads the diff)
     | context_unchanged (the excerpt, `context` lines either side, the heading above it and its number of occurrences are the same in the old
-    and the new body: the page changed somewhere else)."""
+    and the new body: the page changed somewhere else) | section_risk (as context_unchanged, but a line with a risk word was added to the excerpt's section,
+    outside the window: a person reads it)."""
     new = neighbourhood(new_body, rule["source_excerpt"], context)
     if new is None:
         return {"class": "excerpt_missing", "lines": None}
@@ -608,6 +627,9 @@ def judge(rule, new_body, old_body, context):
         return {"class": "old_body_unavailable", "lines": new["at"]}
     old = neighbourhood(old_body, rule["source_excerpt"], context)
     if old is not None and all(old[k] == new[k] for k in ("lines", "heading", "count")):
+        risks = section_risks(old_body, new_body, rule["source_excerpt"])
+        if risks:
+            return {"class": "section_risk", "lines": new["at"], "added": risks[:10]}
         return {"class": "context_unchanged", "lines": new["at"]}
     shown = lambda n: ([n["heading"]] if n else []) + (n["lines"] if n else [])  # noqa: E731
     diff = list(difflib.unified_diff(shown(old), shown(new), "old", "new", lineterm="", n=1))
@@ -672,7 +694,7 @@ def rereview(only=(), rule_ids=(), run=None, old_dirs=(), context=CONTEXT_LINES,
         if key not in olds:
             olds[key] = stored_body(*key, old_dirs)
         row = {"rule_id": rule["rule_id"], "source_id": rule["source_id"], "state": st["state"], **judge(rule, o.body, olds[key], context)}
-        row["renewable"] = row["class"] == "context_unchanged" or (rule["rule_id"] in accept and row["class"] in ("context_changed", "old_body_unavailable"))
+        row["renewable"] = row["class"] == "context_unchanged" or (rule["rule_id"] in accept and row["class"] in ("context_changed", "old_body_unavailable", "section_risk"))
         row["renewed"] = False
         rows.append(row)
     sources = []
