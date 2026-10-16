@@ -43,6 +43,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           ISSUE: ${{ inputs.report_only && ' ' || '--issue' }}
         run: python3 -I .github/scripts/ci_report.py drift result.json $ISSUE | tee -a "$GITHUB_STEP_SUMMARY"
+      # When a page changed: how each drifted rule stands against the old body kept in the cache. Read only (no --write); the answer is quoted
+      # in this run's Summary and not in the issue. Exit 2 is anything but CURRENT.
+      - shell: bash
+        run: |
+          if [ "$(python3 -I -c 'import json; print(json.load(open("result.json"))["verdict"])')" = DRIFT ]; then
+            python3 -I tools/maintain.py rereview > rereview.json || [ "$?" -eq 2 ]
+            python3 -I .github/scripts/ci_report.py rereview rereview.json | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
       # Exit 2 is PARTIAL: some rule has no old body yet (the page changed before it was kept, or could not be fetched this time).
       - shell: bash
         run: python3 -I tools/maintain.py keep > kept.json || [ "$?" -eq 2 ]

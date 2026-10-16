@@ -231,6 +231,7 @@ python3 tools/maintain.py docs --write
 `.github/workflows/watch.yml` が、毎週月曜の 03:17(UTC)に `drift` と `discover` を実行します。Actions の画面から、手動でも実行できます。
 
 - `drift` のあと、`keep` が、規則が審査された本文を `outputs/reviewed-bodies` に残し、そのディレクトリを `actions/cache` が次の週へ引き継ぎます。結果は Summary に出るだけで、Issue にはなりません。キャッシュは、既定ブランチの実行で保存したものだけが、次の定期実行で使えます。ブランチから手動実行した分は、`main` の実行からは見えません。7 日間使われないキャッシュは Actions が消すので、週ごとの実行が保っています。
+- `drift` が `DRIFT` のとき、`rereview`(読み取りのみ。registry は書き換えません)を実行し、キャッシュの旧本文と比べた結果を、Summary に出します。規則ごとの見込み(引用の前後が同じ / 変わった / 旧本文がない / 引用が消えた)と、変わった所の数行です。資料の引用を含むので、Issue には載せません。Issue は、この Summary を見るよう案内します。旧本文はキャッシュにしかなく、手元の clone にはないので、手元で更新するときは、Summary の差分を読んで判断した規則を `rereview --accept` で指定します。
 - 手動実行のとき、`report_only` を選ぶと、Issue を作らず、編集もしません。報告だけが Summary に出ます。
 - 人の判断が要る結果(`drift` の `DRIFT`、`discover` の `CANDIDATES`)だけが、`drift` または `discover` のラベルを付けた Issue になります。開いている Issue があれば、本文を最新の報告に置き換えます。
 - `INCOMPLETE`(取得できない資料や一覧がある)は、実行の Summary に出るだけで、Issue にはなりません。通信エラーは、再実行で解消することがあります。
