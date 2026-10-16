@@ -169,6 +169,6 @@ Issue #9・#12。実行ホスト Codex CLI **0.155.1**、モデル `gpt-6-sol`�
 
 Issue #8。通常の `--mode accept-edits`、専用の作業用プロジェクトで、取得→drift/rules→view_file→改稿→verify→sources→最終回答を実行した。グローバル権限設定と許可スキップは使わない。会話IDは `e31110ee-aa49-41b7-b9dd-4d49851561c5`。生ログは未追跡のワークスペース外に複製し、観測した1.4.0とSHA-256をsidecarへ固定した。ログを編集・合成していない。
 
-参照検証 **PASS_LIVE**、資料報告 **CONSISTENT**、手順監査 **PASS (15/15項目)**。3資料の観測行数は、claude-code-best-practices 334、claude-code-prompt-library 800、claude-context-claude-md 131、計1,265行。観測は生成前に表示された行だけで、認知的な読了を証明しない。実ログで現れた純粋な複数読取りと再開時のSYSTEM_MESSAGEに対応し、同じ真正なログで再検証した。記録したハッシュと結果は `tests/fixtures/antigravity-140-e2e-evidence.json`。
+参照検証 **PASS_LIVE**、資料報告 **CONSISTENT**、手順監査 **PASS (15/15項目)**。3資料の観測行数は、claude-code-best-practices 334、claude-code-prompt-library 800、claude-context-claude-md 131、計1,265行。prompt-libraryは全1,613行のうち表示された800行だけを観測し、残りの行や全文の読了を確認したとは扱わない。観測は生成前に表示された行だけで、認知的な読了を証明しない。実ログで現れた純粋な複数読取りと再開時のSYSTEM_MESSAGEに対応し、同じ真正なログで再検証した。記録したハッシュと結果は `tests/fixtures/antigravity-140-e2e-evidence.json`。
 
 最終回答は候補と明記し、資料報告と3つの状態を提示した。意味審査 **NOT_REVIEWED**、効果 **NOT_EVALUATED**。1.3.5での権限拒否の記録は当時の結果として保持する。1回・macOS・1.4.0の結果であり、別の版やWindowsへの一般化はしない。
