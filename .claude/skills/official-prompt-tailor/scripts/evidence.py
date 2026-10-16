@@ -35,7 +35,7 @@ RUBRIC_PATH = SKILL_DIR / "references" / "review-rubric.md"
 HOSTS = ("claude-code", "codex", "chatgpt-work", "antigravity", "claude-cowork")  # products that can run this skill
 LOG_ADAPTERS = {"claude-code": "claude-code-transcript-jsonl-v1", "codex": "codex-rollout-jsonl-v1"}  # host -> pinned log format
 LOG_ADAPTER_HOSTS = tuple(LOG_ADAPTERS)  # hosts whose session logs the read-observation adapter understands
-CODEX_CLI_VERSIONS = ("0.155.1", "0.162.")  # the Codex cli_version prefixes codex-rollout-jsonl-v1 was observed on (CLI exec; Desktop)
+CODEX_CLI_VERSION = re.compile(r"(?:0\.155\.1|0\.162\.[0-9]+(?:-alpha(?:\.[0-9]+)+)?)")
 TARGET_IDS = ("chatgpt", "chatgpt-work", "codex", "claude", "claude-cowork", "claude-code", "gemini",
               "antigravity", "gemini-agent-app", "gemini-cli", "google-adk-agent")
 PURPOSES = ("one-shot", "persistent-instructions", "skill-instructions", "agent-instruction")
@@ -1249,10 +1249,19 @@ def parse_transcript(path):
             if not isinstance(b, dict):
                 continue
             if b.get("type") == "tool_use" and d.get("type") == "assistant":
-                events.append({"kind": "use", "seq": seq, "id": b.get("id"), "name": b.get("name"), "input": b.get("input") or {}})
+                _log_string(b, "id", seq)
+                _log_string(b, "name", seq)
+                if not isinstance(b.get("input"), dict):
+                    raise ContractError(f"host log line {seq + 1}: tool input must be an object")
+                events.append({"kind": "use", "seq": seq, "id": b["id"], "name": b["name"], "input": b["input"]})
             elif b.get("type") == "tool_result" and d.get("type") == "user":
+                _log_string(b, "tool_use_id", seq)
                 c = b.get("content")
-                text = c if isinstance(c, str) else "\n".join(x.get("text", "") for x in c if isinstance(x, dict)) if isinstance(c, list) else ""
+                if not isinstance(c, (str, list)):
+                    raise ContractError(f"host log line {seq + 1}: tool result content must be text or a list")
+                if isinstance(c, list) and any(not isinstance(x, dict) for x in c):
+                    raise ContractError(f"host log line {seq + 1}: content blocks must be objects")
+                text = c if isinstance(c, str) else "\n".join(_log_string(x, "text", seq) for x in c if x.get("type") == "text" or "text" in x)
                 events.append({"kind": "result", "seq": seq, "id": b.get("tool_use_id"), "error": bool(b.get("is_error")), "text": text})
     return events
 
@@ -1261,8 +1270,17 @@ _JS_CMD = re.compile(r'exec_command\(\{\s*cmd\s*:\s*("(?:[^"\\]|\\.)*")')
 _TRUNCATED = re.compile(r"…\d+ tokens truncated…")
 
 
+def _log_string(record, field, seq):
+    if not isinstance(record, dict) or not isinstance(record.get(field), str) or (field in ("call_id", "id", "tool_use_id") and not record[field]):
+        raise ContractError(f"host log line {seq + 1}: {field} must be a string (nonempty for IDs)")
+    return record[field]
+
+
 def parse_host_log(host, path):
-    return parse_codex_rollout(path) if host == "codex" else parse_transcript(path)
+    parsers = {"codex": parse_codex_rollout, "claude-code": parse_transcript}
+    if host not in LOG_ADAPTERS or host not in parsers:
+        raise ContractError(f"no log adapter for host: {host}")
+    return parsers[host](path)
 
 
 def parse_codex_rollout(path):
@@ -1271,14 +1289,16 @@ def parse_codex_rollout(path):
     rows, _ = read_transcript(path)
     meta = rows[0][1] if rows else None
     info = meta.get("payload") if isinstance(meta, dict) and meta.get("type") == "session_meta" else None
-    if not isinstance(info, dict) or not str(info.get("cli_version", "")).startswith(CODEX_CLI_VERSIONS):
-        raise ContractError(f"not a {LOG_ADAPTERS['codex']} log: the first record must be a session_meta with cli_version {' or '.join(CODEX_CLI_VERSIONS)}*")
+    if not isinstance(info, dict) or not isinstance(info.get("cli_version"), str) or not CODEX_CLI_VERSION.fullmatch(info["cli_version"]):
+        raise ContractError(f"not a {LOG_ADAPTERS['codex']} log: the first record must be a session_meta with cli_version 0.155.1 or numeric 0.162.patch[-alpha.N[.N...]]")
     events = []
     for seq, d in rows[1:]:
         q = d.get("payload") if isinstance(d, dict) else None
         if not isinstance(q, dict):
             continue
-        if q.get("type") == "custom_tool_call" and q.get("name") == "exec" and isinstance(q.get("input"), str):
+        if q.get("type") == "custom_tool_call" and q.get("name") == "exec":
+            _log_string(q, "call_id", seq)
+            _log_string(q, "input", seq)
             cmds = []
             for m in _JS_CMD.findall(q["input"]):
                 try:
@@ -1287,9 +1307,12 @@ def parse_codex_rollout(path):
                     cmds.append(None)
             # `script` is kept whole so that a generation write is found even in a command that could not be decoded
             events.append({"kind": "use", "seq": seq, "id": q.get("call_id"), "name": "CodexExec",
-                           "input": {"script": q["input"], "cmds": cmds, "cwd": info.get("cwd") or ""}})
+                           "input": {"script": q["input"], "cmds": cmds, "cwd": info.get("cwd") if isinstance(info.get("cwd"), str) else ""}})
         elif q.get("type") == "custom_tool_call_output":
-            items = [x.get("text", "") for x in q.get("output") or [] if isinstance(x, dict)] if isinstance(q.get("output"), list) else []
+            _log_string(q, "call_id", seq)
+            if not isinstance(q.get("output"), list):
+                raise ContractError(f"host log line {seq + 1}: output must be a list")
+            items = [_log_string(x, "text", seq) for x in q["output"]]
             ok = bool(items) and items[0].startswith("Script completed")
             body, err = "\n".join(items[1:]), not ok
             try:
@@ -1297,7 +1320,7 @@ def parse_codex_rollout(path):
             except ValueError:
                 obj = None
             if isinstance(obj, dict):  # text(await tools.exec_command(..)): the result object; any other shape shows nothing
-                body, err = obj["output"] if isinstance(obj.get("output"), str) else "", err or obj.get("exit_code") not in (0, None)
+                body, err = _log_string(obj, "output", seq), err or obj.get("exit_code") not in (0, None)
             events.append({"kind": "result", "seq": seq, "id": q.get("call_id"), "error": err, "text": body})
     return events
 
@@ -1310,8 +1333,14 @@ def _codex_reads(inp, target):
         toks = shlex.split(inp["cmds"][0])
     except ValueError:
         return False
+    # RTK proxy preserves the command output; unwrap exactly one explicit prefix.
+    if toks[:2] == ["rtk", "proxy"]:
+        toks = toks[2:]
+    # A concatenation cannot attribute matching output to one of several files.
+    if toks[:1] == ["cat"] and len([t for t in toks[1:] if not t.startswith("-") or t == "-"]) != 1:
+        return False
     if toks[:2] == ["rtk", "read"] or toks[:1] in (["cat"], ["nl"], ["head"], ["tail"], ["bat"]) or (toks[:2] == ["sed", "-n"]):
-        return any(not t.startswith("-") and _resolves_to(t if os.path.isabs(t) else os.path.join(inp["cwd"], t), [target]) for t in toks[1:])
+        return any(not t.startswith("-") and (os.path.isabs(t) or (inp["cwd"] and "workdir" not in inp["script"])) and _resolves_to(t if os.path.isabs(t) else os.path.join(inp["cwd"], t), [target]) for t in toks[1:])
     return False
 
 
