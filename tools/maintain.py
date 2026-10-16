@@ -278,6 +278,13 @@ def fit_extraction(base, raw, content_type):
         if len(found) < 2:
             rejected[extraction] = "too_few_headings"
             continue
+        if extraction == "markdown-v1":  # v2 is v1 minus the query of signed images: when that changes the body, v1 would drift every hour
+            try:
+                v2 = ev.process_body({**base, "extraction": "markdown-v2"}, raw, content_type)
+            except ev.Blocked:
+                v2 = body
+            if v2 != body:
+                extraction, body = "markdown-v2", v2
         entry = {**base, "extraction": extraction, "body_locators": [found[0], found[len(found) // 2]]}
         ev.process_body(entry, raw, content_type)  # the same check fetch and verify run
         ev.shape(entry, ev.SRC_F, "source")

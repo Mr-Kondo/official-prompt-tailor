@@ -125,7 +125,7 @@ python3 tools/maintain.py discover
 python3 tools/maintain.py propose --url https://code.claude.com/docs/en/memory.md --target claude-code
 ```
 
-- `extraction` は、HTML 系の 3 種と `markdown-v1` を順に試して、最初に通るものを選びます。
+- `extraction` は、HTML 系の 3 種と `markdown-v1` を順に試して、最初に通るものを選びます(`markdown-v1` が通ったとき、署名付き画像があって本文が変わるなら、`markdown-v2` にします)。
 - `body_locators` は、本文の見出しから 2 件を選びます。選んだ組で、`fetch` や `verify` と同じ検査を通します。
 - 2 回取得して、本文のハッシュが同じかも確かめます(`stable`)。違うと終了コード 2 です。時刻や乱数のような、毎回変わる語が本文に入っています。
 - `--source-id`(省略すると URL から作ります)、`--surface`(繰り返せます)、`--category` を指定できます。
@@ -210,6 +210,7 @@ python3 tools/maintain.py docs --write
      - `html-article-v1`: 最初の `<article>`
      - `html-body-v1`: `<body>`
      - `markdown-v1`: Markdown かプレーンテキスト
+     - `markdown-v2`: `markdown-v1` から、署名付き画像のクエリ(`?expires=…&signature=…`)を除いたもの。`support.claude.com` は、記事の画像に署名を付け、1 時間ごとに付け直します(2026-10-16 に `claude-cowork-projects` で確認)。`markdown-v1` では、同じ記事でも本文のハッシュが 1 時間ごとに変わり、`drift` が `changed` を出し続けます。`propose` は、署名付き画像のある Markdown に、自動で `markdown-v2` を選びます。
    - `body_locators`: 本文に必ず含まれる見出しなどの文字列を、2 件以上。見つからないと、`fetch` は `locators_missing` で `blocked` にします。
 3. `targets` の `required_sources` か `conditional_sources` に、`source_id` を加えます。`required_sources` は常に取得され、`conditional_sources` は `purposes` と `surfaces` が合うときだけ取得されます。規則のある範囲にだけ経路を作ります。`required_sources` に置けるのは、その利用先のすべての `purpose` に使える規則を持つ資料だけです(`registry_problems` が確かめます)。
 4. `fetch` で取得します。`blocked` にならないこと、`snapshots/<id>/body.txt` が本文だけになっていることを確かめます。

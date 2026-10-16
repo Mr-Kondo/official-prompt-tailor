@@ -15,6 +15,7 @@ import shutil
 import socket
 import sys
 import tempfile
+import time
 import unittest
 import urllib.error
 from datetime import datetime, timedelta, timezone
@@ -2334,6 +2335,33 @@ class TestExtraction(unittest.TestCase):
         for kept in (b"Last updated: Jun 18, 2026", b"Updated user model to handle edge cases", b"Updated 3 days ago, see below"):
             body = ev.process_body(src, page.replace(b"<main>", b"<main><p>" + kept + b"</p>"), "text/html")
             self.assertIn(kept.decode(), body)
+
+    SIGNED = (b"![](https://downloads.intercomcdn.com/i/o/abc/123/def/shot.png?expires=%d&amp;signature=%s&amp;req=%s)\n")
+
+    def test_markdown_v2_drops_the_query_of_signed_images_so_a_new_signature_is_not_a_new_body(self):
+        """Intercom re-signs an article's images every hour (support.claude.com, 2026-10-16): v1 hashed the signature, v2 does not."""
+        md = (FIX / "guide.md").read_bytes()
+        v1, v2 = ({"extraction": ex, "body_locators": ["# Notes", "## Details"]} for ex in ("markdown-v1", "markdown-v2"))
+        hour_a, hour_b = md + self.SIGNED % (1792109700, b"aa11", b"QWERTY"), md + self.SIGNED % (1792112400, b"bb22", b"ASDFGHJKL")
+        body = lambda src, raw: ev.process_body(src, raw, "text/markdown")  # noqa: E731
+        self.assertNotEqual(ev.sha_text(body(v1, hour_a)), ev.sha_text(body(v1, hour_b)))  # the problem
+        self.assertEqual(ev.sha_text(body(v2, hour_a)), ev.sha_text(body(v2, hour_b)))  # the fix
+        self.assertIn("![](https://downloads.intercomcdn.com/i/o/abc/123/def/shot.png)", body(v2, hour_a))
+        self.assertEqual(body(v1, md), body(v2, md))  # a page with nothing signed has the same body under both
+        self.assertEqual(ev.sha_text(body(v1, hour_a)), ev.sha_text(hour_a.decode().rstrip("\n") + "\n"))  # v1 itself is as it was
+
+    def test_markdown_v2_leaves_everything_but_signed_images_alone(self):
+        md = (FIX / "guide.md").read_bytes()
+        keep = (b"[a link](https://x.example/a?b=1&signature=keep)\n![plain](https://x.example/p.png?size=2)\n"
+                b"![](https://x.example/q.png)\nsignature=not-in-an-image ![ no link\n")
+        src = {"extraction": "markdown-v2", "body_locators": ["# Notes", "## Details"]}
+        self.assertEqual(ev.process_body(src, md + keep, "text/markdown"), ev.process_body({**src, "extraction": "markdown-v1"}, md + keep, "text/markdown"))
+
+    def test_the_signed_image_pattern_is_linear_on_hostile_input(self):
+        started = time.monotonic()
+        for hostile in ("![" * 100000, "![](" + "a" * 200000, "![](x?" + "&" * 200000, "![x](" + "?signature=" * 20000):
+            ev.SIGNED_IMAGE.sub(r"\1)", hostile)
+        self.assertLess(time.monotonic() - started, 5)
 
     def test_extraction_is_deterministic(self):
         src = {"extraction": "html-main-v1", "body_locators": ["Best practices", "Provide context"]}
