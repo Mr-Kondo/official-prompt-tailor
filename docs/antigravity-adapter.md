@@ -22,7 +22,7 @@ Use `--cli-version 1.4.0` instead when that exact version produced the log. Run 
 
 ## Audit integration
 
-`maintain.py audit` dispatches the same native tool events and uses `antigravity_transcript_texts` to read user requests and the final planner answer, excluding thinking and tool output. Native `run_command` events supply command evidence; opaque unsupported tools can establish a conservative generation barrier, but cannot stand in for executed commands. Synthetic tests cover the integrated audit; a real complete skill execution remains blocked as described below.
+`maintain.py audit` dispatches the same native tool events and uses `antigravity_transcript_texts` to read user requests and the final planner answer, excluding thinking and tool output. Native `run_command` events supply command evidence; opaque unsupported tools can establish a conservative generation barrier, but cannot stand in for executed commands. Synthetic tests cover the integrated audit; the initial 1.3.5 run was blocked, and the later completed 1.4.0 run is recorded below.
 
 ## Genuine runtime evidence and limit
 
@@ -30,7 +30,7 @@ On 2026-10-17 JST a separate bounded `agy --print` invocation was allowed 45 sec
 
 The adapter parsed that **actual native transcript** and observed lines `[1, 2]` before generation attempt step `3`. The requested generated file does not exist. agy exited `0` and reported `SUCCESS` with `denied_actions`; those outer statuses do not prove tool success. The exact log hash, executable hash, version, conversation ID and measured outcomes are in [the runtime evidence record](../tests/fixtures/antigravity-runtime-probe.json). The raw private transcript is not committed. [The fixture](../tests/fixtures/antigravity-1.3.5.jsonl) is synthetic and follows the observed envelope; it is not represented as the actual transcript.
 
-**Full independent skill execution, `audit` PASS and real `sources --host-log` CONSISTENT remain unverified.** The permission block prevents the required generated run artifacts, although audit dispatch is implemented and tested with synthetic records. Completion of #8's full independent-run acceptance criterion must wait for a permitted runtime and the audit integration. Unit tests and CI cannot substitute for that result.
+**At the initial 1.3.5 verification point, full independent skill execution, `audit` PASS and real `sources --host-log` CONSISTENT were unverified.** The permission block prevents the required generated run artifacts, although audit dispatch is implemented and tested with synthetic records. The later 1.4.0 section records completion of that independent-run criterion in a permitted workspace. Unit tests and CI cannot substitute for that result.
 
 
 ## agy 1.4.0 の追加確認 (2026-10-17 JST)
