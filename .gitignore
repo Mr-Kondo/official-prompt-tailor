@@ -1,4 +1,8 @@
 outputs/
+# 検証用の実行結果と資料。公開しない(フォルダごと追跡しない)
+verification/
+# 別エージェント(Codex 等)向けに置いたスキルの複製。追跡しない
+.agents/
 dist/
 __pycache__/
 *.pyc
