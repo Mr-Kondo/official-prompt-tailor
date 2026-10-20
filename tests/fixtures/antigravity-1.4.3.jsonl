@@ -1,0 +1,6 @@
+{"step_index": 0, "type": "USER_INPUT", "status": "DONE", "content": "Synthetic read/write probe"}
+{"step_index": 1, "type": "PLANNER_RESPONSE", "status": "DONE", "tool_calls": [{"name": "read_file", "args": {"Path": "/workspace/probe.txt"}}]}
+{"step_index": 2, "type": "GENERIC", "status": "DONE", "content": "Created At: synthetic-time\nCompleted At: synthetic-time\nShowing lines 1-2 of 2\n1: adapter probe alpha\n2: adapter probe beta"}
+{"step_index": 3, "type": "PLANNER_RESPONSE", "status": "DONE", "tool_calls": [{"name": "write_file", "args": {"Path": "/workspace/optimized.md", "Content": "done", "Overwrite": true}}]}
+{"step_index": 4, "type": "GENERIC", "status": "DONE", "content": "Created At: synthetic-time\nCompleted At: synthetic-time\nCreated file."}
+{"step_index": 5, "type": "PLANNER_RESPONSE", "status": "DONE", "content": "Synthetic probe complete."}

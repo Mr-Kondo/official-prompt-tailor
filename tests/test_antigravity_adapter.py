@@ -194,3 +194,82 @@ class TestAntigravityAdapter(Base):
         self.assertEqual(self.verify(self.run, "live", self.save("1.4.0"))["verdict"], "PASS_LIVE")
         self.rows[-1]["tool_calls"] = [{"name": "view_file", "args": {"AbsolutePath": str(self.body)}}]
         self.assertIn("host_log_invalid", codes(self.verify(self.run, "live", self.save("1.4.0"))))
+
+    def native143(self):
+        self.rows = [json.loads(line) for line in
+                     (ROOT / "tests/fixtures/antigravity-1.4.3.jsonl").read_text(encoding="utf-8").splitlines()]
+        self.rows[1]["tool_calls"][0]["args"]["Path"] = str(self.body)
+        self.rows[3]["tool_calls"][0]["args"]["Path"] = str(self.run / "optimized.md")
+        lines = self.body.read_text(encoding="utf-8").splitlines()
+        self.rows[2]["content"] = f"Showing lines 1-{len(lines)} of {len(lines)}\n" + "\n".join(f"{n}: {line}" for n, line in enumerate(lines, 1))
+
+    def test_143_single_read_passes_verify_sources_and_pin(self):
+        self.native143()
+        log = self.save("1.4.3")
+        self.assertEqual(self.verify(self.run, "live", log)["verdict"], "PASS_LIVE")
+        self.assertEqual(ev.sources_report(self.run, log)["verdict"], "CONSISTENT")
+        Path(str(log) + ".version.json").unlink()
+        command = [sys.executable, str(ROOT / ".claude/skills/official-prompt-tailor/scripts/pin_antigravity_log.py"),
+                   "--log", str(log), "--cli-version", "1.4.3"]
+        self.assertEqual(subprocess.run(command, capture_output=True).returncode, 0)
+        events = ev.parse_host_log("antigravity", log)
+        self.assertEqual(next(e["input"]["file_path"] for e in events if e.get("name") == "Write"), str(self.run / "optimized.md"))
+
+    def test_143_ambiguous_failed_or_post_generation_reads_are_not_observed(self):
+        self.native143()
+        baseline = copy.deepcopy(self.rows)
+        for variant in ("batch", "mixed", "other_tool", "extra_result", "denied", "truncated", "request_truncated", "missing", "after_write", "command_write", "opaque_edit", "wrong_path", "wrong_start", "wrong_total", "legacy"):
+            with self.subTest(variant):
+                self.rows = copy.deepcopy(baseline)
+                if variant == "batch":
+                    self.rows[1]["tool_calls"] *= 2
+                elif variant == "mixed":
+                    self.rows[1]["tool_calls"].append(copy.deepcopy(self.rows[3]["tool_calls"][0]))
+                elif variant == "other_tool":
+                    self.rows[1]["tool_calls"].append({"name": "run_command", "args": {"CommandLine": "echo harmless"}})
+                elif variant == "extra_result":
+                    extra = copy.deepcopy(self.rows[2]); extra["step_index"] = 3
+                    for row in self.rows[3:]: row["step_index"] += 1
+                    self.rows.insert(3, extra)
+                elif variant == "denied":
+                    self.rows[2]["status"] = "ERROR"
+                elif variant == "truncated":
+                    self.rows[2]["truncated_fields"] = ["content"]
+                elif variant == "request_truncated":
+                    self.rows[1]["truncated_fields"] = ["tool_calls"]
+                elif variant == "missing":
+                    del self.rows[2]
+                elif variant == "after_write":
+                    self.rows[0] = copy.deepcopy(self.rows[3]); self.rows[0]["step_index"] = 0
+                elif variant in ("command_write", "opaque_edit"):
+                    call = {"name": "run_command", "args": {"CommandLine": "echo generated > " + str(self.run / "optimized.md")}} if variant == "command_write" else {"name": "edit_file", "args": {"Path": str(self.run / "optimized.md")}}
+                    self.rows[0] = {"step_index": 0, "type": "PLANNER_RESPONSE", "status": "DONE", "tool_calls": [call]}
+                elif variant == "wrong_path":
+                    self.rows[1]["tool_calls"][0]["args"]["Path"] = str(self.tmp / "other.txt")
+                elif variant == "wrong_start":
+                    self.rows[1]["tool_calls"][0]["args"]["StartLine"] = 2
+                elif variant == "wrong_total":
+                    self.rows[2]["content"] = self.rows[2]["content"].split(" of ")[0] + " of 0\n1: cut"
+                log = self.save("1.4.0" if variant == "legacy" else "1.4.3")
+                seen, _ = ev.observed_read_lines(ev.parse_host_log("antigravity", log), self.body, [self.run / "optimized.md"])
+                self.assertEqual(seen, set())
+
+    def test_143_requested_window_and_invalid_ranges(self):
+        self.native143()
+        baseline = copy.deepcopy(self.rows)
+        line = self.body.read_text(encoding="utf-8").splitlines()[1]
+        args = self.rows[1]["tool_calls"][0]["args"]
+        args.update(StartLine=2, EndLine=2)
+        self.rows[2]["content"] = f"Showing lines 2-2 of 3\n2: {line}"
+        log = self.save("1.4.3")
+        self.assertEqual(self.verify(self.run, "live", log)["verdict"], "PASS_LIVE")
+        for invalid in ({"StartLine": 0}, {"StartLine": -1}, {"StartLine": True}, {"StartLine": "2"},
+                        {"StartLine": 3, "EndLine": 2}, {"ByteOffset": 0}):
+            with self.subTest(invalid=invalid):
+                self.rows = copy.deepcopy(baseline)
+                self.rows[1]["tool_calls"][0]["args"].update(invalid)
+                self.assertIn("host_log_invalid", codes(self.verify(self.run, "live", self.save("1.4.3"))))
+        self.rows = copy.deepcopy(baseline)
+        for version in ("1.4.2", "1.4.4", "1.4.30"):
+            with self.subTest(version):
+                self.assertIn("host_log_invalid", codes(self.verify(self.run, "live", self.save(version))))

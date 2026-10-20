@@ -1019,10 +1019,23 @@ class TestAudit(Base):
                         content = f"File Path: `file://{self.body}`\nShowing lines 1 to {len(lines)}\n" + "\n".join(f"{n}: {line}" for n, line in enumerate(lines, 1))
                     record.update(type="GENERIC", content=content)
                 native.append(record)
-        log.write_text("\n".join(json.dumps(r) for r in native) + "\n", encoding="utf-8")
-        ev.write_json(Path(str(log) + ".version.json"), {"format": ev.LOG_ADAPTERS["antigravity"], "cli_version": "1.3.5", "sha256": ev.sha_file(log)})
-        rep = maintain.audit(self.run, log)
-        self.assertEqual(rep["verdict"], "PASS", rep)
+        for version in ("1.3.5", "1.4.3"):
+            with self.subTest(version):
+                rows = copy.deepcopy(native)
+                if version == "1.4.3":
+                    for index, row in enumerate(rows):
+                        for call in row.get("tool_calls", []):
+                            if call["name"] in ("view_file", "write_to_file"):
+                                key = "AbsolutePath" if call["name"] == "view_file" else "TargetFile"
+                                call["name"] = "read_file" if key == "AbsolutePath" else "write_file"
+                                call["args"] = {"Path": call["args"][key]}
+                        if row["type"] == "GENERIC" and rows[index - 1].get("tool_calls", [{}])[0].get("name") == "read_file":
+                            lines = self.body.read_text(encoding="utf-8").splitlines()
+                            row["content"] = f"Showing lines 1-{len(lines)} of {len(lines)}\n" + "\n".join(f"{n}: {line}" for n, line in enumerate(lines, 1))
+                log.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+                ev.write_json(Path(str(log) + ".version.json"), {"format": ev.LOG_ADAPTERS["antigravity"], "cli_version": version, "sha256": ev.sha_file(log)})
+                rep = maintain.audit(self.run, log)
+                self.assertEqual(rep["verdict"], "PASS", rep)
 
     def codex_record(self, steps=None):
         old = ev.load_json(self.run / "input.json")
