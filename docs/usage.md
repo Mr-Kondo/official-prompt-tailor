@@ -70,3 +70,5 @@ verify: INCOMPLETE ['mode_mismatch', 'no_host_log', 'status_not_for_mode'] (exit
 - 適用できる公式資料がない target(例: 通常の `gemini` の一回の依頼)。
 - 外部ツール由来の本文(origin を独立確認できない)。
 - 規則の審査後に、資料本文が変わった(`rereview_pending`)。
+
+`sources --markdown` のログ案内は実行ホストに合わせて出ます。対応ホストでも、操作者が指定した対応版・形式のログが必要です。未対応ホストは未対応と表示し、別製品のログの投入を勧めません。v0.6.2からレポートは書式4です。旧書式の貼付けは `audit` で比較不能の `WARN` として扱います。

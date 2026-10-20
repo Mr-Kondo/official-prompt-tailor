@@ -1218,6 +1218,9 @@ class TestAudit(Base):
         older = report.replace("判定", "結果")  # the wording of an earlier version
         cases = {"the mark line dropped": (report.replace(mark + "\n", ""), "PASS", "PASS"),
                  "a lower mark": (older.replace(mark, mark.replace(str(ev.SOURCES_FORMAT), str(ev.SOURCES_FORMAT - 1))), "PASS", "WARN"),
+                 "format 3 with the old Claude-only guidance": (report.replace(mark, "<!-- sources-report format 3 -->").replace(
+                     "- 読取りは観測していません。`claude-code` に対応する版・形式のログを、操作者が `--host-log` に指定してください。対応外の版・形式では観測できません。",
+                     "- 読取りは観測していません。Claude Code のログのパスを `--host-log` に渡すと、どの行を読んだかを確かめられます。"), "PASS", "WARN"),
                  "no mark, as before the mark existed": (older.replace(mark + "\n", ""), "PASS", "WARN"),
                  "the current mark, the text altered": (older, "FAIL", "FAIL")}
         for name, (pasted, verdict, status) in cases.items():

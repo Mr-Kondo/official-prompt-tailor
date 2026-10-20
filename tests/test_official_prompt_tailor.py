@@ -1995,6 +1995,26 @@ class TestSourcesRun(Base):
         rep = ev.sources_report(run, log)  # a Claude Code log must be refused by the Antigravity adapter
         self.assertEqual((rep["verdict"], rep["selected"][0]["read"]["reason"]), ("INCONSISTENT", "host_log_invalid"))
 
+    def test_missing_log_guidance_matches_the_execution_host(self):
+        # Issue #31: a Codex or Antigravity run must not ask for a Claude Code log.
+        for host in ev.HOSTS:
+            with self.subTest(host=host):
+                run, _ = self.good_run("guidance-" + host, execution_host=host)
+                code, text, _ = self.cli("sources", "--run", str(run), "--markdown")
+                self.assertEqual(code, 0)
+                self.assertNotIn("Claude Code のログのパス", text)
+                self.assertIn(f"`{host}`", text)
+                if host in ("claude-code", "codex", "antigravity"):
+                    self.assertIn("対応する版・形式のログ", text)
+                    self.assertIn("操作者が `--host-log` に指定", text)
+                    self.assertIn("対応外の版・形式では観測できません", text)
+                else:
+                    self.assertIn(f"`{host}` は読取り観測に未対応", text)
+                    self.assertNotIn("操作者が `--host-log` に指定", text)
+        observed = ev.render_sources(self.report())
+        self.assertNotIn("操作者が `--host-log` に指定", observed)
+        self.assertNotIn("読取り観測に未対応", observed)
+
     def test_reads_that_do_not_show_the_cited_lines_are_incomplete_and_a_forged_log_is_inconsistent(self):
         partial = self.write_log(self.run, lines=[1, 3], path=self.tmp / "partial.jsonl")
         rep = self.report(partial)
