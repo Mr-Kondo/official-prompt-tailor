@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "date_jst": "2026-10-21",
+  "probes": {
+    "codex": {
+      "cli_version": "0.163.0",
+      "native_log_sha256": "3a655c7d26a9f719a4956e4efbdd869412f978b01f0dd04e4cf79237aa8ebe6d",
+      "observed_lines": [
+        1,
+        2
+      ],
+      "first_generation_sequence": 20,
+      "generated_content": "done",
+      "scope": "genuine two-line read/write probe; not full skill audit",
+      "native_log_committed": false
+    },
+    "agy": {
+      "cli_version": "1.4.3",
+      "native_log_sha256": "68c60549bdbbd0dea4f23274165f6a7eb8e3677c48ecf96e6ef7838c891eaf85",
+      "observed_lines": [
+        1,
+        2
+      ],
+      "first_generation_sequence": 3,
+      "generated_content": "done",
+      "scope": "genuine two-line read/write probe; not full skill audit",
+      "native_log_committed": false
+    }
+  },
+  "fixture": "antigravity-1.4.3.jsonl is synthetic, not a native log",
+  "batch_support_143": false,
+  "followup_issue": 34
+}

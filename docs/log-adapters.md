@@ -10,7 +10,7 @@
 
 `codex-rollout-jsonl-v1` は `~/.codex/sessions` の rollout JSONL を読みます。`codex exec --json` の標準出力は別形式のため対象外です。
 
-- 対応版は `0.155.1` と `0.162.<数字>` です。後者は `-alpha.<数字>[.<数字>...]` 付きも受理します（例: `0.162.0-alpha.17.2`）。
+- 対応版は `0.155.1`・`0.162.<数字>`・`0.163.0` です。`0.162.<数字>` は `-alpha.<数字>[.<数字>...]` 付きも受理します（例: `0.162.0-alpha.17.2`）。
 - 読取りに数えるのは、`exec` 内の `exec_command` が1つで、本文パスを指定する単一の `cat` / `nl` / `head` / `tail` / `sed -n` / `bat` / `rtk read` です。先頭の `rtk proxy` は1回だけ取り除きます。入れ子のラッパー、複数ファイルの `cat`、複数コマンドは数えません。
 - `;` `&` `|` `<` `>` `$` を含むコマンドは数えません。`workdir` を含むスクリプトは相対パスの基準を確定できませんが、絶対パスの読取りは対象になります。
 - 本文と一致する連続行だけを数えます。切り詰め記号の前後の行や、本文の2か所に一致する行は数えません。Windows形式のパス（`\`）は未対応です。
@@ -19,7 +19,7 @@
 
 ## Antigravity
 
-`antigravity-transcript-jsonl-v1` は、実際に観測した agy CLI 1.3.5・1.4.0 の形式だけを読みます。製品公式の版付きプロトコルではありません。関連: [#8](https://github.com/Mr-Kondo/official-prompt-tailor/issues/8)・[#15](https://github.com/Mr-Kondo/official-prompt-tailor/issues/15)。
+`antigravity-transcript-jsonl-v1` は、実際に観測した agy CLI 1.3.5・1.4.0・1.4.3 の形式だけを読みます。製品公式の版付きプロトコルではありません。関連: [#8](https://github.com/Mr-Kondo/official-prompt-tailor/issues/8)・[#15](https://github.com/Mr-Kondo/official-prompt-tailor/issues/15)。
 
 Use the completed native file at `~/.gemini/antigravity-cli/brain/<conversation-id>/.system_generated/logs/transcript_full.jsonl` (or a byte-identical copy outside the run directory). `transcript.jsonl` may truncate fields; records with truncated read content are not counted. Stream-JSON stdout is a different protocol and is rejected. No automatic search of private history is performed.
 
@@ -29,7 +29,7 @@ The native transcript does not identify its producer version. Observe `rtk agy -
 rtk python3 .claude/skills/official-prompt-tailor/scripts/pin_antigravity_log.py --log /absolute/path/transcript_full.jsonl --cli-version 1.3.5
 ```
 
-Use `--cli-version 1.4.0` instead when that exact version produced the log. Run this command from the repository root with an existing completed transcript. It creates `<log>.version.json`, requiring the exact format name, CLI version and SHA-256. It refuses to overwrite a sidecar. Unsupported versions, missing/mismatched sidecars and malformed records yield `host_log_invalid`; logs inside a run still yield `host_log_inside_run`. A sidecar is an **operator assertion**, not proof of product identity, authenticity or an older transcript's producer version. Do not stamp historical logs based only on today's installed version. Pass the native log, not the sidecar, to the existing `verify --host-log` and `sources --host-log` options.
+Use `--cli-version 1.4.0` or `--cli-version 1.4.3` instead when that exact version produced the log. Run this command from the repository root with an existing completed transcript. It creates `<log>.version.json`, requiring the exact format name, CLI version and SHA-256. It refuses to overwrite a sidecar. Unsupported versions, missing/mismatched sidecars and malformed records yield `host_log_invalid`; logs inside a run still yield `host_log_inside_run`. A sidecar is an **operator assertion**, not proof of product identity, authenticity or an older transcript's producer version. Do not stamp historical logs based only on today's installed version. Pass the native log, not the sidecar, to the existing `verify --host-log` and `sources --host-log` options.
 
 ### 読取りとして数える条件
 
@@ -44,6 +44,14 @@ Use `--cli-version 1.4.0` instead when that exact version produced the log. Run 
 実際の独立実行で、一つのplannerに複数の `view_file` があり、その直後に各ファイルのGENERIC応答が連続する形式を確認した。1.4.0だけで、全呼出しが読取り・要求パスが重複しない・応答数と順序が一致する・各出力のファイル名が要求パスに一致する場合に限って観測する。一つでも失敗・切り詰め・パス違いがあればバッチ全体を数えない。書込みとの混在と同一ファイルの複数窓は未対応のまま。1.3.5は従来どおり単一読取りだけを扱う。
 
 再開時の `SYSTEM_MESSAGE` は1.4.0で `source=SYSTEM`・`status=DONE`・ツール呼出しなしの場合だけ受理し、読取り・コマンド証拠として数えません。
+
+### 1.4.3 の単一読取り
+
+`read_file` の絶対パス `Path` と、その直後の成功した `GENERIC` 応答を照合します。planner内の呼出しがその1つだけで、要求と応答が未切詰め、stepが連続し、続けて別の `GENERIC` 応答がなく、`Showing lines A-B of N` と行番号付き本文がある場合に限ります。引数は `Path`・任意の `StartLine` / `EndLine` に限定します。未知の引数は拒否します。行番号は正の整数で、表示窓が要求範囲に収まる必要があります。本文一致と生成前の条件も従来どおりです。
+
+応答にパス・呼出しIDがないため、関連付けは単一呼出しと直後の応答という観測形式に依存します。複数読取り、書込みとの混在は数えません（[Issue #34](https://github.com/Mr-Kondo/official-prompt-tailor/issues/34)）。ログや製品の真正性を認証する仕組みではありません。`write_file` の `Path` は生成試行として扱います。1.4.0のパス付き複数読取りを1.4.3へ推定適用せず、未観測の再開形式も受理しません。
+
+2026-10-21 JSTに、Codex 0.163.0とagy 1.4.3の実際の別プロセスで、2行を読んだ後に別呼出しで書き込む限定プローブを実施しました。両者で生成前の2行だけを観測しました。[実行証拠の要約](../tests/fixtures/current-cli-runtime-probes.json)と[合成fixture](../tests/fixtures/antigravity-1.4.3.jsonl)は別物です。完全なスキルの通し監査やWindows/Linuxの起動確認、意味審査・改善効果の証明ではありません。
 
 ### audit との統合
 

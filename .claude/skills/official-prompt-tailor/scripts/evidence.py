@@ -33,10 +33,10 @@ REGISTRY_PATH = SKILL_DIR / "references" / "registry.json"
 RUBRIC_PATH = SKILL_DIR / "references" / "review-rubric.md"
 
 HOSTS = ("claude-code", "codex", "chatgpt-work", "antigravity", "claude-cowork")  # products that can run this skill
-ANTIGRAVITY_CLI_VERSIONS = ("1.3.5", "1.4.0")
+ANTIGRAVITY_CLI_VERSIONS = ("1.3.5", "1.4.0", "1.4.3")
 LOG_ADAPTERS = {"antigravity": "antigravity-transcript-jsonl-v1", "claude-code": "claude-code-transcript-jsonl-v1", "codex": "codex-rollout-jsonl-v1"}  # host -> pinned log format
 LOG_ADAPTER_HOSTS = tuple(LOG_ADAPTERS)  # hosts whose session logs the read-observation adapter understands
-CODEX_CLI_VERSION = re.compile(r"(?:0\.155\.1|0\.162\.[0-9]+(?:-alpha(?:\.[0-9]+)+)?)")
+CODEX_CLI_VERSION = re.compile(r"(?:0\.155\.1|0\.163\.0|0\.162\.[0-9]+(?:-alpha(?:\.[0-9]+)+)?)")
 TARGET_IDS = ("chatgpt", "chatgpt-work", "codex", "claude", "claude-cowork", "claude-code", "gemini",
               "antigravity", "gemini-agent-app", "gemini-cli", "google-adk-agent")
 PURPOSES = ("one-shot", "persistent-instructions", "skill-instructions", "agent-instruction")
@@ -1276,7 +1276,7 @@ def parse_host_log(host, path):
 
 
 def parse_antigravity_transcript(path):
-    """Observed agy 1.3.5/1.4.0 transcript; version sidecar is an operator assertion, not authentication."""
+    """Observed pinned agy transcript; version sidecar is an operator assertion, not authentication."""
     try:
         manifest = json.loads(Path(str(path) + ".version.json").read_text(encoding="utf-8"))
     except (OSError, ValueError) as ex:
@@ -1302,21 +1302,31 @@ def parse_antigravity_transcript(path):
             raise ContractError("invalid Antigravity system message")
     for offset, (_, record) in enumerate(rows):
         if record["type"] == "PLANNER_RESPONSE":
-            events.extend(_antigravity_tool_events(record, rows[offset + 1:offset + 2]))
+            events.extend(_antigravity_tool_events(record, rows[offset + 1:offset + 3], manifest["cli_version"]))
             if manifest["cli_version"] == "1.4.0":
                 events.extend(_antigravity_batch_reads(record, rows[offset + 1:offset + 1 + len(record.get("tool_calls", []))]))
     return events
 
 
-def _antigravity_tool_events(record, following):
+def _antigravity_tool_events(record, following, version):
     calls = record.get("tool_calls", [])
     if not isinstance(calls, list) or any(not isinstance(call, dict) or not isinstance(call.get("args"), dict) or not isinstance(call.get("name"), str) for call in calls):
         raise ContractError("invalid Antigravity tool calls")
     events = []
+    read_name, path_key = ("read_file", "Path") if version == "1.4.3" else ("view_file", "AbsolutePath")
     for call in calls:
         seq, args, name = record["step_index"], call["args"], call["name"]
-        if name == "view_file" and (not isinstance(args.get("AbsolutePath"), str) or not os.path.isabs(args["AbsolutePath"])):
-            raise ContractError("invalid Antigravity read path")
+        if name == read_name:
+            if not isinstance(args.get(path_key), str) or not os.path.isabs(args[path_key]):
+                raise ContractError("invalid Antigravity read path")
+            if version == "1.4.3":
+                if args.keys() - {"Path", "StartLine", "EndLine"}:
+                    raise ContractError("unsupported Antigravity read arguments")
+                for key in ("StartLine", "EndLine"):
+                    if key in args and (type(args[key]) is not int or args[key] < 1):
+                        raise ContractError("invalid Antigravity read range")
+                if args.get("EndLine", args.get("StartLine", 1)) < args.get("StartLine", 1):
+                    raise ContractError("invalid Antigravity read range")
         # Preserve actual commands for maintain.audit; opaque tools remain conservative write barriers.
         if name == "run_command":
             command = args.get("CommandLine")
@@ -1327,12 +1337,16 @@ def _antigravity_tool_events(record, following):
             if not isinstance(args.get("TargetFile"), str):
                 raise ContractError("invalid Antigravity write path")
             events.append({"kind": "use", "seq": seq, "id": str(seq), "name": "Write", "input": {"file_path": args["TargetFile"]}})
-        elif name != "view_file":
+        elif name == "write_file" and version == "1.4.3":
+            if not isinstance(args.get("Path"), str):
+                raise ContractError("invalid Antigravity write path")
+            events.append({"kind": "use", "seq": seq, "id": str(seq), "name": "Write", "input": {"file_path": args["Path"]}})
+        elif name != read_name:
             events.append({"kind": "use", "seq": seq, "id": str(seq), "name": "CodexExec",
                            "input": {"script": json.dumps(args), "cmds": [], "cwd": ""}})
-        if name != "view_file" or len(calls) != 1 or record.get("truncated_fields") or record["status"] != "DONE":
+        if name != read_name or len(calls) != 1 or record.get("truncated_fields") or record["status"] != "DONE":
             continue
-        events.extend(_antigravity_read_events(record, following))
+        events.extend(_antigravity_read_events(record, following, version))
     return events
 
 
@@ -1361,27 +1375,38 @@ def _antigravity_batch_reads(record, following):
     return events
 
 
-def _antigravity_read_events(record, following):
+def _antigravity_read_events(record, following, version):
     if not following:
         return []
     response = following[0][1]
     seq, args = record["step_index"], record["tool_calls"][0]["args"]
-    text, path = response.get("content"), args.get("AbsolutePath")
+    text, path = response.get("content"), args.get("Path" if version == "1.4.3" else "AbsolutePath")
     if (response["type"] != "GENERIC" or response["step_index"] != seq + 1 or response["status"] != "DONE"
             or response.get("error") or response.get("truncated_fields") or not isinstance(text, str)
             or not isinstance(path, str) or not os.path.isabs(path)):
         return []
-    numbered = _antigravity_numbered_output(text, path)
+    if version == "1.4.3":
+        if len(following) > 1 and following[1][1]["type"] == "GENERIC":
+            return []
+        window = re.search(r"^Showing lines (\d+)-(\d+) of (\d+)$", text, re.M)
+        if not window or int(window[1]) != args.get("StartLine", 1) or int(window[2]) > args.get("EndLine", int(window[3])):
+            return []
+    numbered = _antigravity_numbered_output(text, path, version)
     return [{"kind": "use", "seq": seq, "id": "read-" + str(seq), "name": "Read", "input": {"file_path": path}},
             {"kind": "result", "seq": response["step_index"], "id": "read-" + str(seq), "error": False, "text": numbered}]
 
 
-def _antigravity_numbered_output(text, path):
-    # Bind the output envelope to the requested file before accepting any numbered body lines.
-    match = re.search(r"^Showing lines (\d+) to (\d+)$", text, re.M)
-    if not match or f"File Path: `file://{path}`" not in text[:match.start()].splitlines():
-        return ""
-    start, end = map(int, match.groups())
+def _antigravity_numbered_output(text, path, version="1.4.0"):
+    # 1.4.3 lacks a response path: only a single call with its immediately adjacent result is credited (#34).
+    if version == "1.4.3":
+        match = re.search(r"^Showing lines (\d+)-(\d+) of (\d+)$", text, re.M)
+        if not match or int(match[2]) > int(match[3]):
+            return ""
+    else:
+        match = re.search(r"^Showing lines (\d+) to (\d+)$", text, re.M)
+        if not match or f"File Path: `file://{path}`" not in text[:match.start()].splitlines():
+            return ""
+    start, end = map(int, match.groups()[:2])
     if start < 1 or end < start:
         return ""
     lines = text[match.end():].splitlines()
@@ -1417,13 +1442,13 @@ def antigravity_transcript_texts(path):
 
 
 def parse_codex_rollout(path):
-    """codex-rollout-jsonl-v1 (session_meta.cli_version 0.155.1 or 0.162.*): one "CodexExec" use per `exec` custom_tool_call (a JS script), and its output.
+    """codex-rollout-jsonl-v1 (session_meta.cli_version 0.155.1, 0.162.* or 0.163.0): one "CodexExec" use per `exec` custom_tool_call (a JS script), and its output.
     Any other cli_version is refused, not guessed at."""
     rows, _ = read_transcript(path)
     meta = rows[0][1] if rows else None
     info = meta.get("payload") if isinstance(meta, dict) and meta.get("type") == "session_meta" else None
     if not isinstance(info, dict) or not isinstance(info.get("cli_version"), str) or not CODEX_CLI_VERSION.fullmatch(info["cli_version"]):
-        raise ContractError(f"not a {LOG_ADAPTERS['codex']} log: the first record must be a session_meta with cli_version 0.155.1 or numeric 0.162.patch[-alpha.N[.N...]]")
+        raise ContractError(f"not a {LOG_ADAPTERS['codex']} log: the first record must be a session_meta with cli_version 0.155.1, 0.163.0 or numeric 0.162.patch[-alpha.N[.N...]]")
     events = []
     for seq, d in rows[1:]:
         q = d.get("payload") if isinstance(d, dict) else None
