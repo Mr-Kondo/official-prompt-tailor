@@ -18,6 +18,10 @@ tools/maintain.py                保守用(スキルには同梱しない): disc
 tests/   evals/prompt-tailor-cases.jsonl   outputs/(Git 管理外)
 ```
 
+## 文書の読み方
+
+通常は、このREADMEから[インストール](docs/install.md)・[利用手順](docs/usage.md)・[利用先の選び方](docs/targets.md)へ進みます。製品の制約とログの詳細は仕様、`docs/history/` は過去の記録です。規則の更新や公開を行う開発者は[メンテナンス手順](docs/maintenance.md)を参照してください。
+
 ## インストール
 
 macOS・Linux・Windows で動きます(Python 3.9 以上、標準ライブラリのみ)。Windows では、`python3` を `python` または `py -3` に読み替えてください。
@@ -53,7 +57,7 @@ python3 install.py --uninstall --project <プロジェクト>            # 削�
 | Claude Cowork | `--zip` で ZIP を作って、アップロード | 自動または指定 | 未確認 |
 | ChatGPT Work | `--plugin` でプラグインを作る(取り込み方は未確認) | `@` で選択 | 未確認 |
 
-読取りの観測ができるのは、Claude Code だけです。他の製品では、参照検証は最良でも `INCOMPLETE` になります。各製品の注意点と制約は [docs/products.md](docs/products.md)、Antigravity CLI の許可ルールと測定結果は [docs/antigravity.md](docs/antigravity.md) にあります。
+読取り観測は Claude Code・Codex・Antigravity の対応ログで行います。対応する版・形式には制限があり、ログがない場合や未対応の製品では、参照検証は `INCOMPLETE` になります。[製品ごとの制約](docs/products.md)と[ログの仕様](docs/log-adapters.md)を参照してください。
 
 ### 必要な接続先(HTTPS)
 
@@ -95,7 +99,7 @@ Claude Code で `/official-prompt-tailor` を呼ぶか、「このプロンプ�
 
 ### 会社の文書を持ち出せない場合
 
-`scripts/private_feedback.py` で、原文を入力せずに選択式の評価票を作れます。社内で元プロンプトと改稿を確認し、行・列の対応、例外、予定表現などの判定だけを記入して共有用JSONへ出力します。自動送信は行わず、共有できるかは社内規則に従います。xlsxの検査や匿名化、独立した意味審査の代わりにはなりません。[操作・出力・エラー](.claude/skills/official-prompt-tailor/references/private-feedback.md)と[調査・設計判断](docs/private-feedback-design.md)を参照してください。
+`scripts/private_feedback.py` で、原文を入力せずに選択式の評価票を作れます。社内で元プロンプトと改稿を確認し、行・列の対応、例外、予定表現などの判定だけを記入して共有用JSONへ出力します。自動送信は行わず、共有できるかは社内規則に従います。xlsxの検査や匿名化、独立した意味審査の代わりにはなりません。[操作・出力・エラー](.claude/skills/official-prompt-tailor/references/private-feedback.md)を参照してください。開発時の根拠は[設計履歴](docs/history/private-feedback-design.md)に残しています。
 
 ## 何を保証するか
 
@@ -103,7 +107,7 @@ Claude Code で `/official-prompt-tailor` を呼ぶか、「このプロンプ�
 
 ## メンテナンスと審査
 
-公式資料は変わります。更新の確認(`drift`)と新規ページの発見(`tools/maintain.py discover`)は、毎週 GitHub Actions でも実行されます。規則の再確認方法、資料の追加方法、意味審査、効果測定、リリースの手順は [docs/maintenance.md](docs/maintenance.md) にあります。別のエージェントに手順を通させた結果と、その検査(`audit`)は [docs/independent-runs.md](docs/independent-runs.md) にあります。
+公式資料は変わります。更新の確認(`drift`)と新規ページの発見(`tools/maintain.py discover`)は、毎週 GitHub Actions でも実行されます。規則の再確認方法、資料の追加方法、意味審査、効果測定、リリースの手順は [docs/maintenance.md](docs/maintenance.md) にあります。別のエージェントに手順を通させた結果と、その検査(`audit`)は [独立実行の履歴](docs/history/runtime-verification.md#independent-runs) にあります。
 
 ## テスト
 

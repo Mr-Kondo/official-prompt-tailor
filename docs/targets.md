@@ -127,7 +127,7 @@
 - Claude チャット・Claude Cowork: 全会話に適用する好みの指示は、`claude-cowork-and-chat` の規則で扱います。Cowork のプロジェクトの指示は、`claude-cowork-projects` の規則です。`agent-instruction` に使える規則は、`api` とモデルを指定したときの、モデルを限定した規則だけです。
 - Claude Code: `claude-code-verification` だけが、4 つの `purpose` すべてに使えます。CLAUDE.md は `persistent-instructions`、スキルは `skill-instructions` で扱います。それぞれ専用の資料と規則があります。
 - Gemini Apps: `one-shot` 用の資料はありません。Gems の常設指示は、`target_surface` を `gems` にします。
-- Antigravity: `one-shot` 用の資料は、`antigravity-cli-best-practices` だけです。Antigravity CLI での実測は [antigravity.md](antigravity.md) にあります。
+- Antigravity: `one-shot` 用の資料は、`antigravity-cli-best-practices` だけです。Antigravity CLI での実測は [検証履歴](history/runtime-verification.md#antigravity-initial) にあります。
 - Gemini CLI: `GEMINI.md` などの常設指示と、スキルが対象です。`one-shot` では、`official` の根拠は付きません。
 - Google ADK: `agent-instruction` だけが対象です。
 

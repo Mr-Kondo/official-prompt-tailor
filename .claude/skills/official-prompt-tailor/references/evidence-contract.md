@@ -87,7 +87,7 @@ sources --run RUN [--host-log LOG]                                          # ru
 
 `verdict`: `CONSISTENT`(0)/ `INCONSISTENT`(1。`fail` が 1 件でもある)/ `INCOMPLETE`(2)。計画は 0。引数や run の構造の契約違反は 1、run やログが見つからないときは 2。
 
-確かめるのは、記録と registry の整合です。規則の解釈が正しいこと、資料を理解したこと、効果は確かめません。読取りを観測できるのは、ログを渡した Claude Code だけです。
+確かめるのは、記録と registry の整合です。規則の解釈が正しいこと、資料を理解したこと、効果は確かめません。読取り観測には Claude Code・Codex・Antigravity の対応ログが必要です。対応する版・形式は「読取り観測」を参照してください。
 
 ## 資料が 0 件の入力
 
@@ -117,10 +117,10 @@ sources --run RUN [--host-log LOG]                                          # ru
 
 ## 読取り観測
 
-`verify --host-log <path>` で渡す Claude Code のトランスクリプト(JSONL, adapter `claude-code-transcript-jsonl-v1`)から、次をすべて満たす場合だけ `read_status=observed`。
+`verify --host-log <path>` は、`execution_host` に対応する adapter でログを読み、成功した読取り結果を共通形式で照合します。次をすべて満たす場合だけ `read_status=observed`。
 
 - `Read` が `snapshots/<id>/body.txt` を対象にし、結果が成功(`is_error` でない)。
-- 結果の行番号付き本文が `body.txt` の該当行と一致し、採用した根拠の行をすべて含む。
+- adapter が抽出した行番号と本文が `body.txt` の該当行と一致し、採用した根拠の行をすべて含む。
 - その結果が `optimized.md` / `recommendations.json` への最初の書込みより前にある。
 - ログが run ディレクトリの外にある。
 
