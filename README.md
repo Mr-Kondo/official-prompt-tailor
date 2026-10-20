@@ -12,6 +12,7 @@
   references/registry.json       資料(50)・対象(11)・審査済み規則(104)
   references/evidence-contract.md / review-rubric.md
   scripts/evidence.py            fetch / verify / assess / compare / drift / rules / sources(標準ライブラリのみ)
+  scripts/private_feedback.py    原文を収集しない評価票の template / export
 tools/maintain.py                保守用(スキルには同梱しない): discover / propose / adopt / keep / rereview / review / docs / audit
 .github/workflows/               test(Python 3.9〜3.15)・watch(週次の drift と discover)・release
 tests/   evals/prompt-tailor-cases.jsonl   outputs/(Git 管理外)
@@ -91,6 +92,10 @@ python3 install.py --uninstall --project <プロジェクト>            # 削�
 ## 使い方
 
 Claude Code で `/official-prompt-tailor` を呼ぶか、「このプロンプトを Claude Code 向けに公式資料に沿って最適化して」と頼みます。手動で流す手順、cache の例、`INCOMPLETE` の例は [docs/usage.md](docs/usage.md) にあります。利用先ごとの取得資料・使える規則と、`purpose` / `target_surface` / `model_id` の決め方は [docs/targets.md](docs/targets.md) にあります。
+
+### 会社の文書を持ち出せない場合
+
+`scripts/private_feedback.py` で、原文を入力せずに選択式の評価票を作れます。社内で元プロンプトと改稿を確認し、行・列の対応、例外、予定表現などの判定だけを記入して共有用JSONへ出力します。自動送信は行わず、共有できるかは社内規則に従います。xlsxの検査や匿名化、独立した意味審査の代わりにはなりません。[操作・出力・エラー](.claude/skills/official-prompt-tailor/references/private-feedback.md)と[調査・設計判断](docs/private-feedback-design.md)を参照してください。
 
 ## 何を保証するか
 

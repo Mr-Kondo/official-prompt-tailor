@@ -1,0 +1,121 @@
+{
+  "schema_version": 1,
+  "kind": "private_feedback_draft",
+  "origin": "artificial_test",
+  "stage": "prompt_semantics",
+  "conditions": "matched",
+  "environment": {
+    "execution_host": "unknown",
+    "os": "unknown"
+  },
+  "checks": {
+    "identifier_mapping": {
+      "baseline": {
+        "status": "unknown",
+        "method": "unavailable",
+        "reason": "not_run"
+      },
+      "candidate": {
+        "status": "unknown",
+        "method": "unavailable",
+        "reason": "not_run"
+      }
+    },
+    "column_mapping": {
+      "baseline": {
+        "status": "unknown",
+        "method": "unavailable",
+        "reason": "not_run"
+      },
+      "candidate": {
+        "status": "unknown",
+        "method": "unavailable",
+        "reason": "not_run"
+      }
+    },
+    "exact_values": {
+      "baseline": {
+        "status": "unknown",
+        "method": "unavailable",
+        "reason": "not_run"
+      },
+      "candidate": {
+        "status": "unknown",
+        "method": "unavailable",
+        "reason": "not_run"
+      }
+    },
+    "exception_scope": {
+      "baseline": {
+        "status": "pass",
+        "method": "human",
+        "reason": "none"
+      },
+      "candidate": {
+        "status": "fail",
+        "method": "human",
+        "reason": "mismatch"
+      }
+    },
+    "append_vs_replace": {
+      "baseline": {
+        "status": "unknown",
+        "method": "unavailable",
+        "reason": "not_run"
+      },
+      "candidate": {
+        "status": "unknown",
+        "method": "unavailable",
+        "reason": "not_run"
+      }
+    },
+    "numbers_units": {
+      "baseline": {
+        "status": "fail",
+        "method": "human",
+        "reason": "mismatch"
+      },
+      "candidate": {
+        "status": "pass",
+        "method": "human",
+        "reason": "none"
+      }
+    },
+    "modality": {
+      "baseline": {
+        "status": "unknown",
+        "method": "unavailable",
+        "reason": "not_run"
+      },
+      "candidate": {
+        "status": "unknown",
+        "method": "unavailable",
+        "reason": "not_run"
+      }
+    },
+    "evidence_alignment": {
+      "baseline": {
+        "status": "unknown",
+        "method": "unavailable",
+        "reason": "not_run"
+      },
+      "candidate": {
+        "status": "unknown",
+        "method": "unavailable",
+        "reason": "not_run"
+      }
+    },
+    "untouched_cells": {
+      "baseline": {
+        "status": "unknown",
+        "method": "unavailable",
+        "reason": "not_run"
+      },
+      "candidate": {
+        "status": "unknown",
+        "method": "unavailable",
+        "reason": "not_run"
+      }
+    }
+  }
+}

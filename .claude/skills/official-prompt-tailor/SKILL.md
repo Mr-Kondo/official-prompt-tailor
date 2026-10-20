@@ -1,6 +1,6 @@
 ---
 name: official-prompt-tailor
-description: プロンプトを利用先(ChatGPT・Codex・Claude・Gemini・Antigravity 等)の公式資料に基づいて最適化し、取得・引用・適用範囲をスクリプトで検証して返す。「公式ドキュメントに沿ってプロンプトを最適化して」で使う。
+description: プロンプトを利用先(ChatGPT・Codex・Claude・Gemini・Antigravity 等)の公式資料に基づいて最適化し、取得・引用・適用範囲をスクリプトで検証して返す。「公式ドキュメントに沿ってプロンプトを最適化して」、機密原文を持ち出さない評価報告で使う。
 ---
 
 # official-prompt-tailor
@@ -113,3 +113,8 @@ python3 <skill-dir>/scripts/evidence.py verify --run outputs/official-prompt-tai
 - 推奨の採用には「参照検証が PASS」かつ「意味審査が PASS」が必要。満たさない案は **候補**と明記し、「検証済み」「改善済み」と書かない。元のプロンプトを自動で置き換えない。
 - 意味審査が FAIL の改稿は採用候補にせず、理由と原文を示す。
 - 「改善を実測済み」と書けるのは、該当対象の `IMPROVED_ON_TEST_SET` があるときだけ。
+
+## 機密文書を持ち出せない場合の評価報告
+
+- 明示的に評価の報告を頼まれたときは [原文を収集しない選択式票](references/private-feedback.md)を使える。`scripts/private_feedback.py` の `template / export` を使い、社内で選択肢だけを記入して、共有条件の確認後に新規出力する。xlsx・業務md・原文プロンプト・ログを入力せず、原本の共有を求めない。
+- 任意の説明や実値を追加せず、未確認を埋めず、モデルの自己申告を独立審査にしない。票も社内規則に従って扱う。既存 `verify / assess / compare` の結果ではなく、改善効果や機密ゼロを保証しない。通常利用の必須手順にはしない。
