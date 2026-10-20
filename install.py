@@ -39,13 +39,14 @@ TARGETS = {
 }
 UPLOAD_KEYS = {"name", "description", "license", "compatibility", "metadata", "allowed-tools"}  # claude.ai rejects others
 UPLOAD_DESCRIPTION_MAX = 200  # the help article's limit; the API docs say 1024, so the stricter one is used
-PLUGIN_VERSION = "0.5.0"
+PLUGIN_VERSION = "0.6.0"
 PLUGIN_AUTHOR = "official-prompt-tailor"  # plugin manifests require an author name; --author overrides it
 SELF_CHECK = """
 import sys
 sys.dont_write_bytecode = True
 sys.path.insert(0, sys.argv[1])
 import evidence
+import private_feedback
 reg, _ = evidence.load_registry()
 print("check: %d sources, %d rules" % (len(reg["sources"]), len(reg["rules"])))
 """
