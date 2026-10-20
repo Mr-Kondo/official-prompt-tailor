@@ -23,10 +23,10 @@
 
 Use the completed native file at `~/.gemini/antigravity-cli/brain/<conversation-id>/.system_generated/logs/transcript_full.jsonl` (or a byte-identical copy outside the run directory). `transcript.jsonl` may truncate fields; records with truncated read content are not counted. Stream-JSON stdout is a different protocol and is rejected. No automatic search of private history is performed.
 
-The native transcript does not identify its producer version. Observe `rtk agy --version` **when producing the transcript**, then bind those immutable bytes to an explicit sidecar:
+The native transcript does not identify its producer version. Observe `agy --version` **when producing the transcript**, then bind those immutable bytes to an explicit sidecar:
 
 ```sh
-rtk python3 .claude/skills/official-prompt-tailor/scripts/pin_antigravity_log.py --log /absolute/path/transcript_full.jsonl --cli-version 1.3.5
+python3 .claude/skills/official-prompt-tailor/scripts/pin_antigravity_log.py --log /absolute/path/transcript_full.jsonl --cli-version 1.3.5
 ```
 
 Use `--cli-version 1.4.0` or `--cli-version 1.4.3` instead when that exact version produced the log. Run this command from the repository root with an existing completed transcript. It creates `<log>.version.json`, requiring the exact format name, CLI version and SHA-256. It refuses to overwrite a sidecar. Unsupported versions, missing/mismatched sidecars and malformed records yield `host_log_invalid`; logs inside a run still yield `host_log_inside_run`. A sidecar is an **operator assertion**, not proof of product identity, authenticity or an older transcript's producer version. Do not stamp historical logs based only on today's installed version. Pass the native log, not the sidecar, to the existing `verify --host-log` and `sources --host-log` options.
@@ -62,4 +62,4 @@ step列は先頭0から欠番なく続く必要があります。欠番には生
 
 ## 観測形式を固定する方針
 
-未知の形式・版は推測で受理しません。対応範囲はコードと fixture に固定し、公式の形式説明が確認できたら差分を確認します。これは製品公式の安定スキーマという主張ではありません。完了条件は [Issue #8](https://github.com/Mr-Kondo/official-prompt-tailor/issues/8) を参照してください。
+CodexとAntigravityは、対応版以外のログを拒否します。Claude Codeは版番号を検査しないため、更新後に実ログとfixtureを照合します。対応する形式はコードとfixtureに固定し、公式の形式説明が確認できたら差分を確認します。これは製品公式の安定スキーマという主張ではありません。完了条件は [Issue #8](https://github.com/Mr-Kondo/official-prompt-tailor/issues/8) を参照してください。

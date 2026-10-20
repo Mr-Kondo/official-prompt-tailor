@@ -80,7 +80,7 @@ python3 tools/maintain.py rereview --run outputs/official-prompt-tailor/<run-id>
 
 - `rereview` は、規則が審査された本文(規則に記録したハッシュと同じハッシュの、いまの本文)を、`outputs/reviewed-bodies/<source_id>/<sha256>.txt` に残します。`outputs/` は未追跡(`.gitignore`)です。変わっていない間に実行するだけで、残ります(`--write` は要りません)。
 - 旧本文は、次の順に探します。残した本文、`outputs/` の過去の run(`snapshots/<source_id>/body.txt`)、`--old <ディレクトリ>`(繰り返せる)。見つかった本文でも、SHA-256 が規則に記録したものと違えば、旧本文として使いません。
-- 残るのは、その clone の中だけです。新しい clone や別の機械には、ありません。毎週の `watch` は、`tools/maintain.py keep` で、規則が審査された本文を GitHub Actions のキャッシュに残します([自動実行](#自動実行github-actions))。キャッシュは、Actions の外からは取り出せません。`watch` のキャッシュにある本文を手元で使うには、手元で `rereview` を実行して残すか、`--old` で渡します。旧本文がないときは `old_body_unavailable` になり、新しい本文で引用の前後を読んで判断します。
+- 残るのは、その clone の中だけです。新しい clone や別の機械には、ありません。毎週の `watch` は、`tools/maintain.py keep` で、規則が審査された本文を GitHub Actions のキャッシュに残します([自動実行](#自動実行github-actions))。Actionsのキャッシュはcloneには含まれません。手元に残した旧本文は、`--old` で渡せます。旧本文がないときは `old_body_unavailable` になり、新しい本文で引用の前後を読んで判断します。
 - `keep` は、各資料の本文が、規則に記録したハッシュと同じ間に、その本文を残します。規則のどれも参照しなくなった本文(再審査で規則のハッシュが新しくなったあとの、古い本文)は消します。`--source` で絞ったときは消しません。ページが変わった後は、残した本文を上書きしません。旧本文を持つ資料が無いときは、`PARTIAL`(終了コード 2)と、その資料を報告します。
 - 手元で本文が変わる前に、一度 `rereview`(または `keep`)を実行しておくと、次の変更を比べられます。登録済みの規則の旧本文は、`keep` を最初に実行した時点より前のものは、どこにも残っていません(過去の run があれば、そこから探せます)。
 - 残した本文を消しても、規則や registry は壊れません。比べられなくなるだけです。
@@ -178,7 +178,7 @@ python3 tools/maintain.py docs --write
 }
 ```
 
-- `reviewer_id` は、審査した主体です。エージェントなら `…; not human` と明記し、人なら `human:<名前か役割>` にします。`rules` と `sources` は、`human:` で始まるものだけを人の審査として数えます。
+- このspecの `reviewer_id` は、`…; not human` を含む、実際に審査したエージェントの識別です。`adopt` は `human:` を拒否します。人が審査する場合は [`review`](#人が審査するreview) を使い、`human:<名前か役割>` と台帳に記録します。`rules` と `sources` は、名前がある `human:` の記録だけを人の審査として数えます。
 - `adopt` が確かめることは、次のとおりです。どれか 1 つでも違えば、何も書かずに終わります(契約違反は終了コード 1、本文を安定して取得できないときは 2)。
   - `registry.json` が、`dump_registry` の書式(1 行に 1 レコード)であること。
   - 取得先が https で、registry か `tools/discovery.json` が使うホストにあり、登録済みのページでも `source_id` でもないこと。
@@ -187,7 +187,7 @@ python3 tools/maintain.py docs --write
   - API 限定の資料の規則は、`surfaces` が `["api"]` であること。モデル限定の資料の規則は、`models` がその資料の `models` に含まれること。ほかの検査(`registry_problems`)も通ること。
   - 経路と規則が合っていること(`registry_problems`)。利用先 × `purpose` × `target_surface` × `model_id` の全入力(約 1,200 通り)について、選ばれた資料に、その入力で使える規則が 1 件以上あること。どの入力でも使えない規則がないこと。`verify` は、選ばれた資料のすべてを読んだことを求めるので、規則のない入力で資料を取得すると、読むだけで終わります。
 - `adopt` が書くのは、`source_body_sha256`(取得した本文)、`reviewed_at`、`reviewer_id`、`review_status: reviewed`、`source_locator`(= 引用)と、`targets` への経路です。経路は、規則の `purposes` の和集合に対してだけ作ります。規則のない `purpose` では、その資料は取得されません。規則がすべて特定のモデルに限られる資料は、`models` にもそのモデルを書きます(書かないと、ほかのモデルでも取得され、`registry_problems` が拒否します)。`registry_problems` がエラーを出したら、spec の `purposes`・`surfaces`・`models` を、資料が実際に使われる範囲に直します。
-- Claude Code のサンドボックスは、`.claude/skills` の下に書けません。`--write` が `Operation not permitted` で止まるときは、ターミナルで実行します。
+- 実行環境のサンドボックスによっては、`.claude/skills` の下への書込みが制限されます。`--write` が `Operation not permitted` で止まるときは、ターミナルで実行します。
 
 #### 手で足す場合
 
@@ -248,7 +248,7 @@ python3 .claude/skills/official-prompt-tailor/scripts/evidence.py verify --run o
 python3 tools/maintain.py audit --run outputs/official-prompt-tailor/<run-id> --transcript <記録>
 ```
 
-`audit` は `input.json` の `execution_host` に合わせて Claude Code・Codex・Antigravity のログを解析します。Codex では、`exec` に記録されたコマンドと最終回答を監査し、思考ブロックは読みません。対応する版は [products.md](products.md) を参照してください。
+`audit` は `input.json` の `execution_host` に合わせて Claude Code・Codex・Antigravity のログを解析します。Codex では、`exec` に記録されたコマンドと最終回答を監査し、思考ブロックは読みません。対応する版・形式は [log-adapters.md](log-adapters.md) を参照してください。
 
 `audit` が確かめるのは、手順を守ったか、最終回答が記録と合っているかです。各検査は `PASS` / `FAIL` / `WARN` / `NA` で、`FAIL` が 1 つでもあれば全体が `FAIL`(終了コード 1)です。
 
