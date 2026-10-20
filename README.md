@@ -4,7 +4,7 @@
 
 - 利用先: ChatGPT / ChatGPT Work / Codex / Claude / Cowork / Claude Code / Gemini / Antigravity / Gemini CLI / Google ADK
 - 動かせる製品: Claude Code・Codex・Antigravity・Claude Cowork・ChatGPT Work(これらで動かせるように作ってあります)
-- 実機で動かして確認した製品: Claude Code・Codex・Antigravity CLI
+- 実機での確認記録: Claude Code・Codex CLI・Antigravity CLI。Antigravity アプリは限定確認です。[日付・版・未確認範囲](docs/history/runtime-verification.md#product-reexecution)を参照してください。
 
 ```text
 .claude/skills/official-prompt-tailor/
@@ -24,26 +24,97 @@ tests/   evals/prompt-tailor-cases.jsonl   outputs/(Git 管理外)
 
 ## インストール
 
-macOS・Linux・Windows で動きます(Python 3.9 以上、標準ライブラリのみ)。Windows では、`python3` を `python` または `py -3` に読み替えてください。
+Git と Python 3.9 以上が必要です。Pythonの追加パッケージは不要です。Windows の例は PowerShell 用です。`py -3` がない環境では、Python 3.9 以上を実行できる `python` に読み替えてください。
 
-```bash
-python3 install.py --project <プロジェクト> --gitignore            # Claude Code(既定): <dir>/.claude/skills/
-python3 install.py --user                                          # Claude Code: ~/.claude/skills/
-python3 install.py --target codex --project <プロジェクト>         # Codex: <dir>/.agents/skills/(--user は ~/.agents/skills/)
-python3 install.py --target antigravity --user                     # Antigravity アプリ・IDE: ~/.gemini/config/skills/
-python3 install.py --target antigravity-cli --user                 # Antigravity CLI: ~/.gemini/antigravity-cli/skills/
-python3 install.py --zip <出力先ディレクトリ>                      # Claude / Cowork 用: official-prompt-tailor.zip
-python3 install.py --plugin <出力先ディレクトリ>                   # ChatGPT Work / Codex 用プラグイン: <dir>/official-prompt-tailor/
-python3 install.py --update --project <プロジェクト>               # 更新。他の指定(--user / --target / --plugin)もインストール時と同じ引数
-python3 install.py --uninstall --project <プロジェクト>            # 削除。他の指定もインストール時と同じ引数
+以下は、全プロジェクトで使う **ユーザー配置** の手順です。既に別の場所へ clone している場合や、`--project` で導入した場合は、[既存の場所・配置先を使う更新手順](docs/install.md#既存の場所配置先を使って更新する)を参照してください。配置方法を変えると、既存コピーの更新ではなく、別の場所への導入になります。
+
+### 1. 初回だけソースを取得する
+
+次のコマンドは macOS・Linux・Windows PowerShell 共通です。ホームディレクトリの `official-prompt-tailor` に、このリポジトリの `main` を取得します。
+
+```sh
+git clone --branch main https://github.com/Mr-Kondo/official-prompt-tailor.git "$HOME/official-prompt-tailor"
 ```
 
-- スキルのディレクトリをコピーするだけです。設定・hook・権限は変更しません。
-- 既にある場合は止まります。`--update`(このスキルと確認できるものだけ)か `--force`(何でも)で置き換えられ、旧版は残ります。`--dry-run` で内容だけ確認できます。
-- 既存のセッションには、新しいスキルは出ません。新しいセッションを開いて呼んでください。
+この手順で取得済みなら、clone は繰り返さず、次へ進みます。clone に失敗した場合は、原因を確認してから進めてください。
+
+### 2. 使う製品のコマンドを実行する
+
+**使う製品と OS のブロックを1つ選び、そのままコピーして実行してください。** 現在の作業ディレクトリには依存しません。初回導入と更新で、同じコマンドを使えます。
+
+最初の `git pull --ff-only` が `main` の最新版を取得し、成功した場合だけ `install.py --update` が配置先を更新します。これは公開タグへの固定ではなく、`main` に追従する手順です。`--update` だけでは最新版をダウンロードしません。
+
+#### Codex
+
+macOS・Linux:
+
+```sh
+git -C "$HOME/official-prompt-tailor" pull --ff-only &&
+python3 "$HOME/official-prompt-tailor/install.py" --target codex --user --update
+```
+
+Windows PowerShell:
+
+```powershell
+git -C "$HOME/official-prompt-tailor" pull --ff-only
+if ($? -and $LASTEXITCODE -eq 0) { py -3 "$HOME/official-prompt-tailor/install.py" --target codex --user --update }
+```
+
+#### Claude Code
+
+macOS・Linux:
+
+```sh
+git -C "$HOME/official-prompt-tailor" pull --ff-only &&
+python3 "$HOME/official-prompt-tailor/install.py" --target claude-code --user --update
+```
+
+Windows PowerShell:
+
+```powershell
+git -C "$HOME/official-prompt-tailor" pull --ff-only
+if ($? -and $LASTEXITCODE -eq 0) { py -3 "$HOME/official-prompt-tailor/install.py" --target claude-code --user --update }
+```
+
+#### Antigravity アプリ・IDE
+
+macOS・Linux:
+
+```sh
+git -C "$HOME/official-prompt-tailor" pull --ff-only &&
+python3 "$HOME/official-prompt-tailor/install.py" --target antigravity --user --update
+```
+
+Windows PowerShell:
+
+```powershell
+git -C "$HOME/official-prompt-tailor" pull --ff-only
+if ($? -and $LASTEXITCODE -eq 0) { py -3 "$HOME/official-prompt-tailor/install.py" --target antigravity --user --update }
+```
+
+#### Antigravity CLI
+
+macOS・Linux:
+
+```sh
+git -C "$HOME/official-prompt-tailor" pull --ff-only &&
+python3 "$HOME/official-prompt-tailor/install.py" --target antigravity-cli --user --update
+```
+
+Windows PowerShell:
+
+```powershell
+git -C "$HOME/official-prompt-tailor" pull --ff-only
+if ($? -and $LASTEXITCODE -eq 0) { py -3 "$HOME/official-prompt-tailor/install.py" --target antigravity-cli --user --update }
+```
+
+### 実行後の確認
+
+- 未導入ならインストールし、同じ内容なら `up to date` と表示して何もしません。差替え時は旧版を `.bak-<日時>` へ退避します。このスキルと確認できない既存コピーは更新しません。
+- 設定・hook・権限は変更しません。利用する製品で新しいセッションを開き、下の「動かせる製品」にある方法で呼び出してください。
 - 実行結果は、スキルを使うワークスペースの `outputs/official-prompt-tailor/` に出ます。
 
-各オプションの動作、`--plugin` と `--uninstall` の詳細は [docs/install.md](docs/install.md) にあります。
+プロジェクトへの配置、ZIP・プラグインの作成、削除、更新に失敗した場合は [docs/install.md](docs/install.md) を参照してください。
 
 ## 動かせる製品
 
@@ -52,10 +123,10 @@ python3 install.py --uninstall --project <プロジェクト>            # 削�
 | 動かす製品 | 配置 | 呼び出し | 実機確認 |
 |---|---|---|---|
 | Claude Code | `install.py`(既定) | `/official-prompt-tailor` | 済み |
-| Codex | `--target codex` | `$official-prompt-tailor` か `/skills` | 済み |
-| Antigravity | `--target antigravity` / `antigravity-cli` | `/official-prompt-tailor` | CLI で済み |
+| Codex | `--target codex` | `$official-prompt-tailor` か `/skills` | CLI。Desktop は別途未確認 |
+| Antigravity | `--target antigravity` / `antigravity-cli` | `/official-prompt-tailor` | CLI。アプリは限定確認 |
 | Claude Cowork | `--zip` で ZIP を作って、アップロード | 自動または指定 | 未確認 |
-| ChatGPT Work | `--plugin` でプラグインを作る(取り込み方は未確認) | `@` で選択 | 未確認 |
+| ChatGPT Work | `--plugin` で互換形式を作り、[公式の導入手順](docs/install.md#--pluginchatgpt-work--codex)へ | `@` で選択 | 未確認 |
 
 読取り観測は Claude Code・Codex・Antigravity の対応ログで行います。対応する版・形式には制限があり、ログがない場合や未対応の製品では、参照検証は `INCOMPLETE` になります。[製品ごとの制約](docs/products.md)と[ログの仕様](docs/log-adapters.md)を参照してください。
 
@@ -115,7 +186,7 @@ Claude Code で `/official-prompt-tailor` を呼ぶか、「このプロンプ�
 python3 -m unittest discover -s tests
 ```
 
-ネットワークは mock、fixture は合成データです。通ることが示すのは、「検査コードが想定どおり動く」ことだけです。本番の公式取得・独立ログ・認知的な読了・実際の skill 発火・対象製品での効果を確認したことには、なりません。
+単体テストの通信はmock、ログfixtureは合成データです。実プロセスでの限定検証の記録は、[検証履歴](docs/history/runtime-verification.md)と日付付きの証拠要約に分けています。テストが通ることが示すのは、「検査コードが想定どおり動く」ことだけです。本番の公式取得・独立ログ・認知的な読了・実際の skill 発火・対象製品での効果を確認したことには、なりません。
 
 ## 出典・ライセンス
 

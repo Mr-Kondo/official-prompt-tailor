@@ -301,3 +301,22 @@ The adapter parsed that **actual native transcript** and observed lines `[1, 2]`
 公式の文書の確認(2026-10-16): openai/codex リポジトリの `docs/` の一覧と、developers.openai.com の検索結果を確認した範囲では、rollout の形式を説明した文書は見つかりませんでした。全ファイルを調べた結果ではありません。確認できた公式の説明は `codex exec --json` の標準出力のイベント([Non-interactive mode](https://developers.openai.com/codex/noninteractive))だけで、これは `~/.codex/sessions` のファイルとは別の形式なので、読みません。
 
 実際の `codex exec`0.155.1 で本文を `cat` させた記録を読んで、見えた行(出力が途中で切られ、334 行のうち 51 行)だけが数えられることを確かめました。
+
+
+<a id="product-reexecution"></a>
+
+## 評価票と通常フローの再実行（2026-10-20〜21 JST）
+
+公開版v0.6.1を一時プロジェクトへ配置し、macOSで架空データだけを使って確認しました。各製品の実行結果と、インストーラーの成功を区別しています。詳細と未実施対象は [Issue #29](https://github.com/Mr-Kondo/official-prompt-tailor/issues/29#issuecomment-6293629906) で追跡しています。
+
+| 実行環境 | 確認できたこと | 制約・未確認 |
+|---|---|---|
+| Codex CLI 0.163.0 | 評価票の作成・共有用JSON出力・上書き拒否 | 通常フローはDNSエラーとログ未指定で `INCOMPLETE`。Desktopは別途未確認 |
+| agy CLI 1.4.3 | 通常フローで3資料をlive取得し、最終回答まで進行 | `--host-log` 未指定で `INCOMPLETE`。評価票のコマンドはヘッドレス権限拒否で未生成 |
+| Antigravityアプリ 2.24.0 | 評価票の作成・共有用JSON出力・上書き拒否 | 通常フローはHTTP 403とログ未指定で `INCOMPLETE`。評価票と同じ会話での確認 |
+| Claude Code 2.1.304 | 導入・更新・削除の機械的確認 | スキルの再実行は利用上限で開始できず。過去の実行結果とは区別 |
+| Claude Cowork・ChatGPT Work | 今回の実行確認なし | 専用の取り込み・実行環境を確保できず |
+
+4種類の配置先でinstall/update/uninstallを確認しました。実ユーザーの導入環境は変更していません。意味審査と効果測定は未実施です。この結果をWindows・Linuxや別バージョンへ一般化しません。
+
+同じ調査で見つかった案内の不一致と対応版の不足は、v0.6.2・v0.6.3で修正しました。2026-10-21にCodex CLI 0.163.0とagy CLI 1.4.3で行った2行の読取り・別呼出しでの書込みの限定プローブは、[証拠の要約](../../tests/fixtures/current-cli-runtime-probes.json)に残しています。v0.6.4ではagy 1.4.3の欠番ログを拒否する条件を加え、保存済みの真正プローブを再解析しました。これらのadapter検証は、新たなスキル通し実行の成功とは別です。
