@@ -40,7 +40,7 @@ CODEX_CLI_VERSION = re.compile(r"(?:0\.155\.1|0\.163\.0|0\.162\.[0-9]+(?:-alpha(
 TARGET_IDS = ("chatgpt", "chatgpt-work", "codex", "claude", "claude-cowork", "claude-code", "gemini",
               "antigravity", "gemini-agent-app", "gemini-cli", "google-adk-agent")
 PURPOSES = ("one-shot", "persistent-instructions", "skill-instructions", "agent-instruction")
-EXTRACTIONS = ("html-main-v1", "html-article-v1", "html-body-v1", "markdown-v1", "markdown-v2")
+EXTRACTIONS = ("html-main-v1", "html-main-v2", "html-article-v1", "html-body-v1", "markdown-v1", "markdown-v2")
 MARKDOWN = ("markdown-v1", "markdown-v2")
 FRESH_DAYS = 7  # local policy, not a vendor rule
 MAX_HOPS, TIMEOUT, MAX_BYTES = 5, 15, 5 * 1024 * 1024
@@ -397,10 +397,15 @@ def process_body(src, raw, content_type):
         if ex == "markdown-v2":
             body = SIGNED_IMAGE.sub(r"\1)", body)
     else:
-        p = _Extract({"html-main-v1": "main", "html-article-v1": "article", "html-body-v1": "body"}[ex])
+        p = _Extract({"html-main-v1": "main", "html-main-v2": "main", "html-article-v1": "article", "html-body-v1": "body"}[ex])
         p.feed(text)
         p.close()
-        lines = [ln for ln in p.result() if not UPDATED_LABEL.match(ln)]
+        lines = p.result()
+        # Preserve v1 hashes; only v2 ignores a calendar label immediately below the article title.
+        if (ex == "html-main-v2" and len(lines) > 1 and lines[0].startswith("# ")
+                and re.fullmatch(r"Updated this (week|month|year)", lines[1], re.I)):
+            del lines[1]
+        lines = [ln for ln in lines if not UPDATED_LABEL.match(ln)]
         if not lines:
             raise Blocked("container_missing_or_empty" if not p.done else "body_empty")
         body = "\n".join(lines) + "\n"

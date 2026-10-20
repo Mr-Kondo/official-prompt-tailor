@@ -299,7 +299,7 @@ class TestPropose(MaintainBase):
         self.responses[NEW_MD] = (200, {"content-type": "text/markdown"}, self.md)
         rep = json.loads(self.tool("propose", "--url", NEW_MD, "--target", "claude-code", "--source-id", "notes")[1])
         self.assertEqual((rep["ok"], rep["source"]["extraction"], rep["source"]["source_id"]), (True, "markdown-v1", "notes"))
-        self.assertEqual(sorted(rep["tried"]), ["html-article-v1", "html-body-v1", "html-main-v1"])  # rejected on the content type
+        self.assertEqual(sorted(rep["tried"]), ["html-article-v1", "html-body-v1", "html-main-v1", "html-main-v2"])  # rejected on the content type
 
     def test_a_markdown_page_with_signed_images_gets_markdown_v2_and_one_without_keeps_v1(self):
         signed = self.md + b"![](https://downloads.intercomcdn.com/i/o/abc/1/shot.png?expires=1792112400&amp;signature=aa11&amp;req=Q)\n"
