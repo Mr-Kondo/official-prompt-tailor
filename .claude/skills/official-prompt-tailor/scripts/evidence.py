@@ -1651,7 +1651,7 @@ def _ranges(nums):
 
 
 def _source_reads(run, host, host_log, rows, rec, problem):
-    """Fill row["read"] from a Claude Code transcript the operator supplied, with the adapter and the rule verify uses.
+    """Fill row["read"] from the supplied host log, with the adapter and the rule verify uses.
     -> SHA-256 of the log, or None when no log was read."""
     for row in rows:
         row["read"] = {"status": "unavailable", "reason": None}
@@ -1861,7 +1861,7 @@ def _read_text(r):
             "body_not_verified": "未観測(本文を確認できない)"}.get(r["reason"], "未観測")
 
 
-SOURCES_FORMAT = 3  # raise it whenever render_sources changes its wording or layout: a pasted report is compared only with the same format
+SOURCES_FORMAT = 4  # raise it whenever render_sources changes its wording or layout: a pasted report is compared only with the same format
 FORMAT_MARK = re.compile(r"<!-- sources-report format (\d+) -->")
 
 
@@ -1923,7 +1923,9 @@ def render_sources(rep):
         out += [f"- {p['severity']} `{p['code']}`: {p['message']}" + (f"(`{p['source_id']}`)" if p.get("source_id") else "") for p in rep["problems"]] \
             or ["- 資料の選択は registry の規則から再現でき、本文のハッシュも取得時の記録と一致しました。"]
         if any(x["read"]["reason"] == "no_host_log" for x in rep["selected"]):
-            out.append("- 読取りは観測していません。Claude Code のログのパスを `--host-log` に渡すと、どの行を読んだかを確かめられます。")
+            out.append(f"- 読取りは観測していません。`{inp['execution_host']}` に対応する版・形式のログを、操作者が `--host-log` に指定してください。対応外の版・形式では観測できません。")
+        elif any(x["read"]["reason"] == "no_log_adapter_for_host" for x in rep["selected"]):
+            out.append(f"- `{inp['execution_host']}` は読取り観測に未対応です。ログを渡しても、読取りは観測できません。")
     out += ["", "これは、registry の規則から求めた計画です。実際に取得して読んだかは、run の報告(`--run`)で確かめます。" if plan else
             "これは、取得した資料と記録の整合を見る報告です。規則の解釈が正しいことや、資料の内容を理解したことは確かめません。"]
     return "\n".join(out) + "\n"
