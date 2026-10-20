@@ -1294,6 +1294,8 @@ def parse_antigravity_transcript(path):
     for _, record in rows:
         if not isinstance(record, dict) or type(record.get("step_index")) is not int or record["step_index"] <= previous:
             raise ContractError("Antigravity step indices must be strictly increasing integers")
+        if manifest["cli_version"] == "1.4.3" and record["step_index"] != previous + 1:
+            raise ContractError("Antigravity 1.4.3 steps must be contiguous from zero; missing steps may conceal generation")
         previous = record["step_index"]
         allowed = ("USER_INPUT", "PLANNER_RESPONSE", "GENERIC") + (("SYSTEM_MESSAGE",) if manifest["cli_version"] == "1.4.0" else ())
         if record.get("type") not in allowed or record.get("status") not in ("DONE", "ERROR"):

@@ -251,8 +251,25 @@ class TestAntigravityAdapter(Base):
                 elif variant == "wrong_total":
                     self.rows[2]["content"] = self.rows[2]["content"].split(" of ")[0] + " of 0\n1: cut"
                 log = self.save("1.4.0" if variant == "legacy" else "1.4.3")
-                seen, _ = ev.observed_read_lines(ev.parse_host_log("antigravity", log), self.body, [self.run / "optimized.md"])
-                self.assertEqual(seen, set())
+                if variant == "missing":
+                    self.assertIn("host_log_invalid", codes(self.verify(self.run, "live", log)))
+                else:
+                    seen, _ = ev.observed_read_lines(ev.parse_host_log("antigravity", log), self.body, [self.run / "optimized.md"])
+                    self.assertEqual(seen, set())
+
+    def test_143_missing_steps_cannot_establish_generation_order(self):
+        self.native143()
+        baseline = copy.deepcopy(self.rows)
+        for offset in (0, 1, 3):
+            with self.subTest(missing_before_offset=offset):
+                self.rows = copy.deepcopy(baseline)
+                for row in self.rows[offset:]:
+                    row["step_index"] += 1
+                report = self.verify(self.run, "live", self.save("1.4.3"))
+                self.assertIn("host_log_invalid", codes(report))
+                self.assertNotEqual(report["verdict"], "PASS_LIVE")
+        self.rows = baseline
+        self.assertEqual(self.verify(self.run, "live", self.save("1.4.3"))["verdict"], "PASS_LIVE")
 
     def test_143_requested_window_and_invalid_ranges(self):
         self.native143()
