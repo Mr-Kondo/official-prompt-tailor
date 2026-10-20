@@ -2635,6 +2635,30 @@ class TestExtraction(unittest.TestCase):
             body = ev.process_body(src, page.replace(b"<main>", b"<main><p>" + kept + b"</p>"), "text/html")
             self.assertIn(kept.decode(), body)
 
+    def test_calendar_update_labels_are_metadata_only_in_html_main_v2(self):
+        """Issue #41: an observed Cowork calendar label must not change the article hash."""
+        page = (FIX / "guide.html").read_bytes().replace(b"<main>", b"<main><h1>Article title</h1>")
+        v1 = {"extraction": "html-main-v1", "body_locators": ["Best practices", "Provide context"]}
+        v2 = {**v1, "extraction": "html-main-v2"}
+        plain = ev.process_body(v1, page, "text/html")
+        self.assertEqual(plain, ev.process_body(v2, page, "text/html"))
+        for label in (b"Updated this week", b"Updated this month", b"Updated this year", b"updated this week"):
+            with self.subTest(label=label):
+                with_label = page.replace(b"</h1>", b"</h1><p>" + label + b"</p>", 1)
+                legacy = ev.process_body(v1, with_label, "text/html")
+                self.assertEqual(legacy, plain.replace("# Article title\n", "# Article title\n" + label.decode() + "\n", 1))
+                self.assertEqual(plain, ev.process_body(v2, with_label, "text/html"))
+                within_body = page.replace(b"</h1>", b"</h1><p>Article content</p><p>" + label + b"</p>", 1)
+                self.assertIn(label.decode(), ev.process_body(v2, within_body, "text/html"))
+        for kept in (b"Updated Oct 21, 2026", b"Last updated: Oct 21, 2026", b"Updated this week.",
+                     b"Updated this week, see below", b"Updated last week"):
+            with self.subTest(kept=kept):
+                with_label = page.replace(b"</h1>", b"</h1><p>" + kept + b"</p>", 1)
+                self.assertEqual(ev.process_body(v1, with_label, "text/html"), ev.process_body(v2, with_label, "text/html"))
+        after_metadata = page.replace(b"</h1>", b"</h1><p>Updated today</p><p>Updated this week</p>", 1)
+        self.assertIn("Updated this week", ev.process_body(v2, after_metadata, "text/html"))
+        self.assertNotEqual(plain, ev.process_body(v2, page.replace(b"Provide context", b"Provide context carefully"), "text/html"))
+
     SIGNED = (b"![](https://downloads.intercomcdn.com/i/o/abc/123/def/shot.png?expires=%d&amp;signature=%s&amp;req=%s)\n")
 
     def test_markdown_v2_drops_the_query_of_signed_images_so_a_new_signature_is_not_a_new_body(self):

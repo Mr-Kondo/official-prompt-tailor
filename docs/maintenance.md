@@ -119,7 +119,7 @@ python3 tools/maintain.py discover
 python3 tools/maintain.py propose --url https://code.claude.com/docs/en/memory.md --target claude-code
 ```
 
-- `extraction` は、HTML 系の 3 種と `markdown-v1` を順に試して、最初に通るものを選びます(`markdown-v1` が通ったとき、署名付き画像があって本文が変わるなら、`markdown-v2` にします)。
+- `extraction` は、HTML 系の 4 種と `markdown-v1` を順に試して、最初に通るものを選びます(`markdown-v1` が通ったとき、署名付き画像があって本文が変わるなら、`markdown-v2` にします)。
 - `body_locators` は、本文の見出しから 2 件を選びます。選んだ組で、`fetch` や `verify` と同じ検査を通します。
 - 2 回取得して、本文のハッシュが同じかも確かめます(`stable`)。違うと終了コード 2 です。時刻や乱数のような、毎回変わる語が本文に入っています。
 - `--source-id`(省略すると URL から作ります)、`--surface`(繰り返せます)、`--category` を指定できます。
@@ -201,6 +201,7 @@ python3 tools/maintain.py docs --write
    - `category`: 既存に合わせて `product-prompting` / `product-feature` / `api-prompting`。
    - `extraction`: 本文の取り出し方。次のいずれかです。
      - `html-main-v1`: 最初の `<main>`
+     - `html-main-v2`(v0.6.6 以降): `html-main-v1` に加え、先頭の H1 見出しの直後にある独立した `Updated this week` / `month` / `year` の行を除きます。本文中の同じ語や絶対日付は残します。旧形式の抽出結果は変えません。Cowork の入門記事だけをこの形式へ移し、取得した本文全体の差分を確認して既存規則を再審査しました。
      - `html-article-v1`: 最初の `<article>`
      - `html-body-v1`: `<body>`
      - `markdown-v1`: Markdown かプレーンテキスト
