@@ -49,6 +49,8 @@ Use `--cli-version 1.4.0` or `--cli-version 1.4.3` instead when that exact versi
 
 `read_file` の絶対パス `Path` と、その直後の成功した `GENERIC` 応答を照合します。planner内の呼出しがその1つだけで、要求と応答が未切詰め、stepが連続し、続けて別の `GENERIC` 応答がなく、`Showing lines A-B of N` と行番号付き本文がある場合に限ります。引数は `Path`・任意の `StartLine` / `EndLine` に限定します。未知の引数は拒否します。行番号は正の整数で、表示窓が要求範囲に収まる必要があります。本文一致と生成前の条件も従来どおりです。
 
+step列は先頭0から欠番なく続く必要があります。欠番には生成書込みが隠れている可能性があるため、ログ全体を `host_log_invalid` として拒否します。stepの振り直しやログの偽造を検出する機能ではありません（[Issue #37](https://github.com/Mr-Kondo/official-prompt-tailor/issues/37)）。
+
 応答にパス・呼出しIDがないため、関連付けは単一呼出しと直後の応答という観測形式に依存します。複数読取り、書込みとの混在は数えません（[Issue #34](https://github.com/Mr-Kondo/official-prompt-tailor/issues/34)）。ログや製品の真正性を認証する仕組みではありません。`write_file` の `Path` は生成試行として扱います。1.4.0のパス付き複数読取りを1.4.3へ推定適用せず、未観測の再開形式も受理しません。
 
 2026-10-21 JSTに、Codex 0.163.0とagy 1.4.3の実際の別プロセスで、2行を読んだ後に別呼出しで書き込む限定プローブを実施しました。両者で生成前の2行だけを観測しました。[実行証拠の要約](../tests/fixtures/current-cli-runtime-probes.json)と[合成fixture](../tests/fixtures/antigravity-1.4.3.jsonl)は別物です。完全なスキルの通し監査やWindows/Linuxの起動確認、意味審査・改善効果の証明ではありません。
