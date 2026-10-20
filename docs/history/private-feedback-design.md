@@ -1,6 +1,6 @@
 # 機密原文を収集しない評価票の設計判断
 
-Issue [#27](https://github.com/Mr-Kondo/official-prompt-tailor/issues/27)。基準は2026-10-20、コミット `d5e357b49a4f15c6b2605155a23b5cde85fc8a0a`。操作・選択肢・制約は、配布物にも含む[利用手順](../.claude/skills/official-prompt-tailor/references/private-feedback.md)にまとめています。
+Issue [#27](https://github.com/Mr-Kondo/official-prompt-tailor/issues/27)。基準は2026-10-20、コミット `d5e357b49a4f15c6b2605155a23b5cde85fc8a0a`。操作・選択肢・制約は、配布物にも含む[利用手順](../../.claude/skills/official-prompt-tailor/references/private-feedback.md)にまとめています。
 
 ## 対象範囲
 

@@ -173,8 +173,8 @@ def plugin_manifest(author):
             "displayName": "Official Prompt Tailor",
             "shortDescription": "公式資料に基づくプロンプト最適化と検証",
             "longDescription": "プロンプトを利用先の公式資料に基づいて最適化し、取得・引用・適用範囲・変更箇所への結合をスクリプトで検証する。"
-                               "スクリプトの実行と、公式ドメインへの HTTPS 接続が必要。読取りの観測ができるのは Claude Code だけで、"
-                               "ほかの製品では参照検証は INCOMPLETE になる。",
+                               "スクリプトの実行と、公式ドメインへの HTTPS 接続が必要。読取り観測は Claude Code・Codex・Antigravity の対応ログで行い、"
+                               "ログがない場合や未対応の製品では参照検証は INCOMPLETE になる。",
             "developerName": author,
             "category": "Productivity",
             "capabilities": ["Interactive", "Write"],

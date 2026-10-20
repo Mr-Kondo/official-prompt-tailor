@@ -12,14 +12,7 @@
    - 旧本文との差分で、変わった所が引用の前後に及ぶかを確かめる。これは `tools/maintain.py rereview` が行います([再審査する](#再審査するrereview))。旧本文は、記録した `source_body_sha256` と同じ SHA-256 の本文です。見つからないときは、新しい本文で引用の前後を読んで判断します。資料の全文はコミットしません(著作権)。
    - 見出しが変わって `locators_missing` になったときは、`body_locators` を新しい見出しに直します(2026-10-16 の `antigravity-cli-best-practices` が、この例です)。
 3. 実行中に、allowlist・scope・規則を緩めて合格させない。registry の SHA-256 は acquisition と verification に記録され、取得後に registry が変わると `FAIL` です。
-4. 規則の審査は、これまですべて実行主体(Claude Code, claude-sonnet-5-5)が、取得本文と照合して行いました。初期の 34 件は実装時、追加の 70 件(2026-10-15 に、候補 59 件のうち 31 資料から採用した分)は採用時です。このうち 11 件は、資料の本文が変わったため、2026-10-16 に再審査しました(`reviewer_id` は `agent re-review`。旧本文との差分で、引用とその前後が変わっていないことを確かめました)。人による審査ではありません(`reviewer_id` に明記)。人の審査は、`tools/maintain.py review` が `human:<名前>` として記録します([人が審査する](#人が審査するreview))。`rules` と `sources` は、`human:` で始まる `reviewer_id` だけを人の審査として数えます(`human:` のあとが空だと、registry の検査が拒否します)。`tests/test_official_prompt_tailor.py` の `test_no_rule_claims_a_human_review_that_nobody_has_made` は、エージェントが自分で人の審査を書くのを防ぐ番人です。`human:` の規則は、`tools/human-reviews.json` に同じ審査の記録があるときだけ通ります。
-
-### 移転の確認(2026-10-14)
-
-- ADK の旧 URL `google.github.io/adk-docs/…` は、`adk.dev/agents/llm-agents/` へ 301 で移転しました。
-- Gemini の旧 `answer/16596215` は、`answer/17094507` へ 301 で移転しました(クエリに、変動する `visit_id` が付きます)。
-
-いずれの旧 URL も登録せず、`fetch` は新 URL から始めます。登録外への移転は、取得前に停止し、`blocked`(`redirect_not_registered:…`)として報告します。
+4. 人の審査は `tools/maintain.py review` が `human:<名前>` として記録します([手順](#人が審査するreview))。`rules` と `sources` は、名前がある `human:` の記録だけを人の審査に数えます。`human:` の規則は `tools/human-reviews.json` に同じ記録があるときだけ通ります。過去の審査・資料移転は[保守履歴](history/runtime-verification.md#registry-history)を参照してください。
 
 ## 資料の更新と追加を取り込む
 
@@ -78,7 +71,7 @@ python3 tools/maintain.py rereview --run outputs/official-prompt-tailor/<run-id>
 
 - 出力の `sources[].changes` に、資料全体の差分(変わった行の範囲と、先頭の数行)が出ます。引用から遠い所の変更も、ここで読めます。
 - `verdict`: `CURRENT`(変わった規則がない)/ `READY_TO_STAMP`(すべて `context_unchanged`。`--write` で更新できる)/ `NEEDS_REVIEW`(人が読む規則が残っている)/ `STAMPED`(`--write` で更新した)/ `INCOMPLETE`(取得できない資料がある)。終了コードは、`CURRENT` と `STAMPED` が 0、それ以外が 2 です。
-- 比べるのは、引用の前後の行だけです。窓の外にある、規則の意味を変える記述(「この節は非推奨」など)は見ません。`sources[].changes` を読んで、窓の外の変更も確かめてください。`drift` と同じく、変更が意味を変えたかは判定しません。
+- 引用の前後・見出し・出現回数が同じ場合も、引用がある節にリスク語を含む行が増えていれば `section_risk` にします。特定の語の検出に限られ、意味の変化を判定するものではありません。`sources[].changes` で、窓の外や別の節の変更も確かめてください。
 - 人が審査した規則(`human:`)は、本文が変わって再審査すると、機械の審査に置き換わります。人が読んだのは、変わる前の本文だからです。
 
 #### 旧本文の残し方
@@ -244,7 +237,7 @@ python3 tools/maintain.py docs --write
 
 ## 別のエージェントで手順を通す
 
-実機の確認を、規則を書いたエージェント自身が行うと、SKILL.md の読み違いを見落とします。別の文脈のエージェント(Claude Code のサブエージェントなど)に、依頼文と run-id だけを渡して通させ、その記録を規則だけで検査します。結果と、見つかった問題は [independent-runs.md](independent-runs.md) にあります。
+実機の確認を、規則を書いたエージェント自身が行うと、SKILL.md の読み違いを見落とします。別の文脈のエージェント(Claude Code のサブエージェントなど)に、依頼文と run-id だけを渡して通させ、その記録を規則だけで検査します。結果と、見つかった問題は [独立実行の履歴](history/runtime-verification.md#independent-runs) にあります。
 
 1. エージェントには、依頼文とスキルの呼び出しだけを渡します。手順のヒントは渡しません。最終回答のあとに、手順で迷った点を書かせます。
 2. 終わったら、そのエージェント自身の記録(`~/.claude/projects/<プロジェクト>/<セッション>/subagents/agent-<id>.jsonl`)で検査します。
@@ -332,6 +325,6 @@ mkdir <出力先> && python3 <空のディレクトリ>/install.py --zip <出力
 curl -s https://api.github.com/repos/Mr-Kondo/official-prompt-tailor/releases/tags/vX.Y.Z    # assets の digest が "sha256:…" で一致する
 ```
 
-- `install.py --zip` は、最後に `sha256:` を出すので、`release.yml` のログにも残ります。`test.yml` も、コミットごとに同じ ZIP を作って `sha256:` を出します。同じコミットなら、10 ジョブのすべてで同じ値になります。
+- `install.py --zip` は、最後に `sha256:` を出すので、`release.yml` のログにも残ります。`test.yml` も、コミットごとに同じ ZIP を作って `sha256:` を出します。同じコミットなら、[test.yml](../.github/workflows/test.yml) の全ジョブで同じ値になります。
 - この方法で確かめられるのは、この変更を入れた後のリリースからです。それ以前の ZIP は、更新日時と圧縮が入っているため、作り直しても一致しません。
 - 一致しないときは、ZIP の中身(名前・サイズ・内容)を `unzip -l` と `diff -r` で比べます。ファイルの改行が CRLF になっていると一致しません(`.gitattributes` が LF に固定しているので、通常は起きません)。

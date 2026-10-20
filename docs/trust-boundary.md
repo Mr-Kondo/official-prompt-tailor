@@ -8,7 +8,7 @@
 - target / surface / model / purpose と、審査済み規則の一致。
 - 変更箇所と、原文・改稿の span / hash の結合。
 - レビュー記録・評価記録の構造と、由来の整合。
-- どの資料を見たか(`sources`)。資料の選択は registry の規則から求め直し、取得した本文のハッシュは記録と比べ、読んだ行は(ログを渡したとき)Claude Code のログから求めます。モデルが書いた説明は使いません。
+- どの資料を見たか(`sources`)。資料の選択は registry の規則から求め直し、取得した本文のハッシュは記録と比べ、読んだ行は、対応ログを渡したときに adapter で求めます。モデルが書いた説明は使いません。
 
 ## 保証しないもの
 
@@ -18,7 +18,7 @@
 - 改稿の性能。
 - 資料の変更が、規則の意味を変えたかどうか。`drift` が比べるのは、ハッシュと引用の有無だけです。
 - 規則の解釈が正しいこと。`reviewed` は、規則の審査が済んだ印です。審査者は `reviewer_id` に残り、`human:` で始まるものだけが人です。registry の規則のうち、人の審査は 0 件です(`rules` と `sources` が、その run での件数を出します)。
-- `sources` が「読んだ」と言えるのは、ログを渡した Claude Code だけです。ログがなければ「未観測」で、他の製品のログは解釈しません。読んだ行を示すことは、内容を理解したことを意味しません。
+- 読取り観測には、Claude Code・Codex・Antigravity の対応ログが必要です。ログがなければ未観測です。読んだ行を示すことは、内容を理解したことを意味しません。
 - モデル別の資料がない利用先(ChatGPT・Codex・Gemini など)では、`model_id` で資料の選択は変わりません。モデルに応じた最適化は、いまは Claude の API だけです。
 
 `verify` の合格は、意味審査・効果測定を兼ねません。
@@ -27,8 +27,8 @@
 
 - snapshot は、改ざん耐性のある署名ではありません。同じユーザーが書き換えられるファイルシステム上の、「再検査可能な取得物」です。
 - `--host-log` は、運用者が指定したパスを信頼します。署名や収集元の認証はしません。run ディレクトリ内のログは自作として `FAIL`、ログなしは `INCOMPLETE` です。ログのパスを、スキルが自分で探して渡してはいけません。
-- `--host-log` の adapter(`claude-code-transcript-jsonl-v1`)は、Claude Code 2.1.287 のトランスクリプトで観測した形式を読みます。観測した形式は、`tool_use` / `tool_result` ブロックと、`Read` 結果の行番号付き本文です。Codex の adapter(`codex-rollout-jsonl-v1`)は Codex `0.162.*` の rollout で観測した形式だけを読み、読取りの数え方の制限は [products.md](products.md) にあります。
-- この形式は、公式に保証された安定スキーマではありません。Claude Code の更新後は、`tests/` の形式と実ログを見比べてください。
+- 対応するログの版・形式と読取り条件は [log-adapters.md](log-adapters.md) を参照してください。
+- adapter が読む形式は、製品公式の安定スキーマではありません。各製品の更新後は、`tests/` の fixture と実ログを見比べてください。
 - サブエージェントの記録(全メッセージが `isSidechain` で、1 つの `agentId` を持つファイル)は、そのエージェント自身の記録として全体を読みます。メインの記録の中にある sidechain のメッセージは、これまでどおり読みません。`agentId` が複数ある、または無いファイルは、サブエージェントの記録とは見なしません。
 - DNS に残るリスクがあります。接続前に、名前解決結果(IPv4/IPv6 すべて)を検査します。ただし、検査と実接続は別々の名前解決で、敵対的な DNS(DNS rebinding)を完全には防げません。
 - プロキシ経由でローカルの名前解決ができない環境では、解決をプロキシに委ねます(`dns_delegated_to_proxy`)。
@@ -37,5 +37,3 @@
 - 新しい依存パッケージ、グローバル設定、hook、自動適用はありません。
 - 保守用の `tools/maintain.py` は、registry か `tools/discovery.json` にあるホストの、https のページだけを取得します。registry を書き換えるのは、`adopt --write`、`rereview --write`、`review` だけです。`adopt` は、審査者が書いた spec の引用が、取得した本文にあることを確かめて、審査者の `reviewer_id` を記録します(`human:` で始まるものは拒否します)。`rereview` は、引用とその前後が旧本文と同じ規則の審査を、機械の審査(`not human`)として更新します。`review` は、対話端末で人が入力した名前を `human:<名前>` として記録し、`tools/human-reviews.json` にも残します。どれも、規則の解釈が正しいことは確かめません。`discover` が挙げる候補と、`propose` が作る登録案は、公式であることも、規則の審査も保証しません。`docs --write` が書き換えるのは、README と `docs/` の、registry から求めた件数と表だけです。
 - 週次の GitHub Actions(`watch.yml`)が書くのは、このリポジトリの Issue だけです。`drift` / `discover` の結果を、ラベル付きの 1 件の Issue に置きます。
-
-Antigravity の `antigravity-transcript-jsonl-v1` は agy 1.3.5 の観測形式を読みます。製品版を持たないログには、操作者が版と SHA-256 を記した sidecar を添えます。これは製品による証明ではありません。[対応範囲・実行証拠・audit 統合フック](antigravity-adapter.md)を参照してください。
