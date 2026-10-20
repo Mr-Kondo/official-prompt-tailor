@@ -1565,7 +1565,16 @@ def _resolves_to(fp, targets):
         rp = Path(fp).resolve()
     except OSError:
         return False
-    return any(rp == Path(t).resolve() for t in targets)
+    for target in targets:
+        target = Path(target).resolve()
+        if rp == target:
+            return True
+        try:
+            if rp.samefile(target):
+                return True
+        except OSError:
+            continue
+    return False
 
 
 def _check_reads(R, run, rec, acq, bodies, sources_out, host_log, ctx, host):

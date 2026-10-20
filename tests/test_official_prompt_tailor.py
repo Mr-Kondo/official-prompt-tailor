@@ -621,6 +621,42 @@ class TestEvidenceBinding(Base):
 
 # =========================================================== time and reads
 class TestTimeAndReads(Base):
+    def test_alias_write_before_read_is_the_first_generation_boundary(self):
+        # Issue #35: real filesystem aliases must not hide an earlier generation write.
+        run, _ = self.good_run("alias-generation")
+        body, generated = run / "snapshots/doc-a/body.txt", run / "optimized.md"
+        alias = self.tmp / "linked-output.md"
+        try:
+            os.link(generated, alias)
+        except OSError:
+            self.skipTest("hard links are not available here")
+        aliases = [alias]
+        case_alias = generated.with_name("OPTIMIZED.md")
+        if case_alias.exists() and case_alias.samefile(generated):
+            aliases.append(case_alias)
+        for alias in aliases:
+            with self.subTest(alias=alias.name):
+                events = ev.parse_host_log("claude-code", self.write_log(run))
+                for event in events:
+                    event["seq"] += 1
+                events.insert(0, {"kind": "use", "seq": 0, "id": "earlier", "name": "Write", "input": {"file_path": str(alias)}})
+                seen, boundary = ev.observed_read_lines(events, body, [generated])
+                self.assertEqual((seen, boundary), (set(), 0))
+
+    def test_distinct_files_and_missing_paths_do_not_become_aliases(self):
+        target = self.tmp / "optimized.md"
+        target.write_text("same content", encoding="utf-8")
+        other = self.tmp / "other.md"
+        other.write_text("same content", encoding="utf-8")
+        self.assertFalse(ev._resolves_to(str(other), [target]))
+        case_path = target.with_name("OPTIMIZED.md")
+        if not case_path.exists():
+            case_path.write_text("same content", encoding="utf-8")
+            self.assertFalse(ev._resolves_to(str(case_path), [target]))
+        missing = self.tmp / "missing.md"
+        self.assertTrue(ev._resolves_to(str(missing), [missing]))
+        self.assertFalse(ev._resolves_to(str(other), [missing]))
+
     def setUp(self):
         super().setUp()
         self.run, self.log = self.good_run()
