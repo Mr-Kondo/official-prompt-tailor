@@ -25,6 +25,7 @@ import subprocess
 import sys
 import tempfile
 import zipfile
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
@@ -39,7 +40,7 @@ TARGETS = {
 }
 UPLOAD_KEYS = {"name", "description", "license", "compatibility", "metadata", "allowed-tools"}  # claude.ai rejects others
 UPLOAD_DESCRIPTION_MAX = 200  # the help article's limit; the API docs say 1024, so the stricter one is used
-PLUGIN_VERSION = "0.6.7"
+PLUGIN_VERSION = "0.6.8"
 PLUGIN_AUTHOR = "official-prompt-tailor"  # plugin manifests require an author name; --author overrides it
 SELF_CHECK = """
 import sys
@@ -55,6 +56,25 @@ print("check: %d sources, %d rules" % (len(reg["sources"]), len(reg["rules"])))
 def die(msg):
     print(f"install.py: {msg}", file=sys.stderr)
     sys.exit(1)
+
+
+@contextmanager
+def restore_on_error(dest, backup):
+    # Enter only after the old destination has been moved successfully.
+    try:
+        yield
+    except (OSError, UnicodeError, subprocess.SubprocessError, zipfile.BadZipFile, zipfile.LargeZipFile) as error:
+        try:
+            if dest.is_symlink() or dest.is_file():
+                dest.unlink()
+            elif dest.exists():
+                shutil.rmtree(dest)
+            if backup:
+                backup.rename(dest)
+        except OSError as recovery_error:
+            die(f"installation failed: {error}\nrecovery failed: {recovery_error}\n"
+                f"destination: {dest}\nprevious copy: {backup if backup else 'none (first installation)'}")
+        die(f"installation failed; rolled back\n{error}")
 
 
 def self_check(skill_dir):
@@ -213,16 +233,14 @@ def make_plugin(out_dir, author, force, dry, update=False):
         print("dry-run only: nothing was changed")
         return 0
     skill = dest / "skills" / NAME
-    shutil.copytree(SRC, skill, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
-    (dest / ".codex-plugin").mkdir()
-    (dest / ".codex-plugin" / "plugin.json").write_bytes(
-        (json.dumps(plugin_manifest(author or PLUGIN_AUTHOR), ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
-    ok, msg = self_check(skill)
-    if not ok:
-        shutil.rmtree(dest)  # the copy this run just made
-        if backup:
-            backup.rename(dest)
-        die("plugin self-check failed; rolled back\n" + msg)
+    with restore_on_error(dest, backup):
+        shutil.copytree(SRC, skill, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+        (dest / ".codex-plugin").mkdir()
+        (dest / ".codex-plugin" / "plugin.json").write_bytes(
+            (json.dumps(plugin_manifest(author or PLUGIN_AUTHOR), ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
+        ok, msg = self_check(skill)
+        if not ok:
+            raise OSError("plugin self-check failed\n" + msg)
     print(msg)
     print(f"created: {dest}" + (f" (previous copy kept at {backup})" if backup else ""))
     print("next: how a plugin folder is added to ChatGPT Work is not verified here; see docs/products.md.")
@@ -260,19 +278,20 @@ def make_zip(out_dir, force, dry):
     if dry:
         print("dry-run only: nothing was changed")
         return 0
+    backup = None
     if target.exists():
-        kept = free_backup(out_dir, f"{NAME}.zip")
-        target.rename(kept)
-        print(f"previous ZIP kept at {kept}")
-    write_zip(target, files)
-    with zipfile.ZipFile(target) as z, tempfile.TemporaryDirectory() as tmp:
-        if f"{NAME}/SKILL.md" not in z.namelist():
-            die("ZIP self-check failed: SKILL.md is not under the skill folder")
-        z.extractall(tmp)
-        ok, msg = self_check(Path(tmp) / NAME)
-    if not ok:
-        target.unlink()  # the file this run just wrote
-        die("ZIP self-check failed; removed\n" + msg)
+        backup = free_backup(out_dir, f"{NAME}.zip")
+        target.rename(backup)
+        print(f"previous ZIP kept at {backup}")
+    with restore_on_error(target, backup):
+        write_zip(target, files)
+        with zipfile.ZipFile(target) as z, tempfile.TemporaryDirectory() as tmp:
+            if f"{NAME}/SKILL.md" not in z.namelist():
+                raise OSError("ZIP self-check failed: SKILL.md is not under the skill folder")
+            z.extractall(tmp)
+            ok, msg = self_check(Path(tmp) / NAME)
+        if not ok:
+            raise OSError("ZIP self-check failed\n" + msg)
     print(msg)
     print(f"created: {target}")
     print(f"sha256: {hashlib.sha256(target.read_bytes()).hexdigest()}")
@@ -362,14 +381,12 @@ def main(argv=None):
     if not current:
         say(f"copy {SRC} -> {dest}")
     if not a.dry_run and not current:
-        base.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(SRC, dest, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
-        ok, msg = self_check(dest)  # the copy must load its own registry; otherwise roll back
-        if not ok:
-            shutil.rmtree(dest)  # the copy this run just made
-            if backup:
-                backup.rename(dest)
-            die("installed copy failed its self-check; rolled back\n" + msg)
+        with restore_on_error(dest, backup):
+            base.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(SRC, dest, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+            ok, msg = self_check(dest)
+            if not ok:
+                raise OSError("installed copy failed its self-check\n" + msg)
         print(msg)
 
     if a.gitignore:

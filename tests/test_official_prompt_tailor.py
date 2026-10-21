@@ -2316,6 +2316,85 @@ class TestInstall(unittest.TestCase):
         self.assertEqual((dest / "local-note.txt").read_text(encoding="utf-8"), "mine")  # previous copy is back
         self.assertEqual(list((self.proj / ".claude").glob("*.bak-*")), [])
 
+    def test_io_failure_restores_previous_contents_or_removes_first_partial_install(self):
+        # Issue #45: fail after a real partial write, not before the destination exists.
+        sys.path.insert(0, str(ROOT))
+        import install
+        import zipfile
+        self.addCleanup(sys.path.remove, str(ROOT))
+        for phase in ("skill_copy", "plugin_copy", "manifest", "zip", "bad_zip", "check_start"):
+            for previous in (False, True):
+                with self.subTest(phase=phase, previous=previous):
+                    folder = self.tmp / f"{phase}-{previous}"
+                    folder.mkdir()
+                    mode = "--zip" if phase in ("zip", "bad_zip") else "--plugin" if phase in ("plugin_copy", "manifest") else "--project"
+                    args = [mode, str(folder)]
+                    dest = folder / ("official-prompt-tailor.zip" if mode == "--zip" else "official-prompt-tailor")
+                    if mode == "--project":
+                        dest = folder / ".claude/skills/official-prompt-tailor"
+                    if previous:
+                        self.assertEqual(self.install(*args).returncode, 0)
+                        if mode != "--zip":
+                            (dest / "local-note.txt").write_bytes(b"keep this local content")
+                    def snapshot():
+                        return dest.read_bytes() if mode == "--zip" else {p.relative_to(dest): p.read_bytes() for p in dest.rglob("*") if p.is_file()}
+                    before = snapshot() if previous else None
+                    def partial_copy(source, target, **kwargs):
+                        Path(target).mkdir(parents=True)
+                        (Path(target) / "partial.txt").write_bytes(b"partial")
+                        raise shutil.Error("injected copy failure")
+                    real_write, real_zip = Path.write_bytes, zipfile.ZipFile.writestr
+                    def partial_manifest(path, content):
+                        real_write(path, content[:10])
+                        raise OSError("injected manifest failure")
+                    def partial_zip(archive, *zip_args, **kwargs):
+                        real_zip(archive, *zip_args, **kwargs)
+                        if phase == "bad_zip":
+                            raise zipfile.BadZipFile("injected invalid ZIP")
+                        raise OSError("injected ZIP failure")
+                    if phase.endswith("copy"):
+                        failure = mock.patch.object(shutil, "copytree", side_effect=partial_copy)
+                    elif phase == "manifest":
+                        failure = mock.patch.object(Path, "write_bytes", partial_manifest)
+                    elif phase in ("zip", "bad_zip"):
+                        failure = mock.patch.object(zipfile.ZipFile, "writestr", partial_zip)
+                    else:
+                        failure = mock.patch.object(install.subprocess, "run", side_effect=OSError("injected spawn failure"))
+                    with failure, contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                        with self.assertRaises(SystemExit) as stopped:
+                            install.main(args + (["--update"] if previous else []))
+                    self.assertEqual(stopped.exception.code, 1)
+                    if previous:
+                        self.assertEqual(snapshot(), before)
+                    else:
+                        self.assertFalse(dest.exists())
+                    self.assertFalse(list(folder.rglob("*.bak-*")))
+
+    def test_recovery_failure_preserves_backup_and_reports_its_location(self):
+        sys.path.insert(0, str(ROOT))
+        import install
+        self.addCleanup(sys.path.remove, str(ROOT))
+        self.assertEqual(self.install("--project", str(self.proj)).returncode, 0)
+        dest = self.proj / ".claude/skills/official-prompt-tailor"
+        (dest / "local-note.txt").write_bytes(b"recover me")
+        def partial_copy(source, target, **kwargs):
+            Path(target).mkdir()
+            (Path(target) / "partial.txt").write_bytes(b"partial")
+            raise OSError("injected copy failure")
+        error = io.StringIO()
+        with mock.patch.object(shutil, "copytree", side_effect=partial_copy), \
+                mock.patch.object(shutil, "rmtree", side_effect=PermissionError("locked")), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(error):
+            with self.assertRaises(SystemExit) as stopped:
+                install.main(["--project", str(self.proj), "--update"])
+        self.assertEqual(stopped.exception.code, 1)
+        backups = list((self.proj / ".claude").glob("*.bak-*"))
+        self.assertEqual(len(backups), 1)
+        self.assertEqual((backups[0] / "local-note.txt").read_bytes(), b"recover me")
+        self.assertIn(str(backups[0]), error.getvalue())
+        self.assertIn("recovery failed", error.getvalue())
+        self.assertNotIn("rolled back", error.getvalue())
+
     def test_each_product_gets_the_folder_its_documentation_names(self):
         p2 = self.tmp / "proj2"  # codex and antigravity share .agents/skills in a project, so each gets its own project
         p2.mkdir()
