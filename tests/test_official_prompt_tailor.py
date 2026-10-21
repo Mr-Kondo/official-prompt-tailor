@@ -2336,6 +2336,8 @@ class TestInstall(unittest.TestCase):
                         self.assertEqual(self.install(*args).returncode, 0)
                         if mode != "--zip":
                             (dest / "local-note.txt").write_bytes(b"keep this local content")
+                            skill = dest / "skills/official-prompt-tailor" if mode == "--plugin" else dest
+                            (skill / "references/recommendations-example.md").write_bytes(b"old copy")
                     def snapshot():
                         return dest.read_bytes() if mode == "--zip" else {p.relative_to(dest): p.read_bytes() for p in dest.rglob("*") if p.is_file()}
                     before = snapshot() if previous else None
