@@ -9,6 +9,19 @@ permissions:
   contents: read
 
 jobs:
+  windows-doc-commands:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shell: [powershell, pwsh]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.9"
+      - name: Run commands extracted from README and docs
+        run: python .github/scripts/check_windows_install_docs.py --shell ${{ matrix.shell }}
   test:
     runs-on: ${{ matrix.os }}
     strategy:

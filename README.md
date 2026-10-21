@@ -24,7 +24,9 @@ tests/   evals/prompt-tailor-cases.jsonl   outputs/(Git 管理外)
 
 ## インストール
 
-Git と Python 3.9 以上が必要です。Pythonの追加パッケージは不要です。Windows の例は PowerShell 用です。`py -3` がない環境では、Python 3.9 以上を実行できる `python` に読み替えてください。
+Git と Python 3.9 以上が必要です。Pythonの追加パッケージは不要です。
+
+Windows の例は **Windows PowerShell 5.1／PowerShell 7 用**です。コマンドプロンプト（cmd.exe）では実行しないでください。`python --version` で Python 3.9 以上が表示される環境を使います。`py -3` だけが使える場合は、例の `python` を `py -3` に置き換えてください。
 
 以下は、全プロジェクトで使う **ユーザー配置** の手順です。既に別の場所へ clone している場合や、`--project` で導入した場合は、[既存の場所・配置先を使う更新手順](docs/install.md#既存の場所配置先を使って更新する)を参照してください。配置方法を変えると、既存コピーの更新ではなく、別の場所への導入になります。
 
@@ -40,7 +42,7 @@ git clone --branch main https://github.com/Mr-Kondo/official-prompt-tailor.git "
 
 ### 2. 使う製品のコマンドを実行する
 
-**使う製品と OS のブロックを1つ選び、そのままコピーして実行してください。** 現在の作業ディレクトリには依存しません。初回導入と更新で、同じコマンドを使えます。
+**使う製品と OS のブロックを1つ選び、そのままコピーして実行してください。** 現在の作業ディレクトリには依存しません。初回導入と更新で、同じコマンドを使えます。PowerShellでは `& {` から最後の `}` まで、ブロック全体をコピーします。
 
 最初の `git pull --ff-only` が `main` の最新版を取得し、成功した場合だけ `install.py --update` が配置先を更新します。これは公開タグへの固定ではなく、`main` に追従する手順です。`--update` だけでは最新版をダウンロードしません。
 
@@ -56,8 +58,12 @@ python3 "$HOME/official-prompt-tailor/install.py" --target codex --user --update
 Windows PowerShell:
 
 ```powershell
-git -C "$HOME/official-prompt-tailor" pull --ff-only
-if ($? -and $LASTEXITCODE -eq 0) { py -3 "$HOME/official-prompt-tailor/install.py" --target codex --user --update }
+& {
+    git -C "$HOME/official-prompt-tailor" pull --ff-only
+    if (-not $? -or $LASTEXITCODE -ne 0) { throw "Git update failed; installation stopped." }
+    python -X utf8 "$HOME/official-prompt-tailor/install.py" --target codex --user --update
+    if (-not $? -or $LASTEXITCODE -ne 0) { throw "Skill update failed." }
+}
 ```
 
 #### Claude Code
@@ -72,8 +78,12 @@ python3 "$HOME/official-prompt-tailor/install.py" --target claude-code --user --
 Windows PowerShell:
 
 ```powershell
-git -C "$HOME/official-prompt-tailor" pull --ff-only
-if ($? -and $LASTEXITCODE -eq 0) { py -3 "$HOME/official-prompt-tailor/install.py" --target claude-code --user --update }
+& {
+    git -C "$HOME/official-prompt-tailor" pull --ff-only
+    if (-not $? -or $LASTEXITCODE -ne 0) { throw "Git update failed; installation stopped." }
+    python -X utf8 "$HOME/official-prompt-tailor/install.py" --target claude-code --user --update
+    if (-not $? -or $LASTEXITCODE -ne 0) { throw "Skill update failed." }
+}
 ```
 
 #### Antigravity アプリ・IDE
@@ -88,8 +98,12 @@ python3 "$HOME/official-prompt-tailor/install.py" --target antigravity --user --
 Windows PowerShell:
 
 ```powershell
-git -C "$HOME/official-prompt-tailor" pull --ff-only
-if ($? -and $LASTEXITCODE -eq 0) { py -3 "$HOME/official-prompt-tailor/install.py" --target antigravity --user --update }
+& {
+    git -C "$HOME/official-prompt-tailor" pull --ff-only
+    if (-not $? -or $LASTEXITCODE -ne 0) { throw "Git update failed; installation stopped." }
+    python -X utf8 "$HOME/official-prompt-tailor/install.py" --target antigravity --user --update
+    if (-not $? -or $LASTEXITCODE -ne 0) { throw "Skill update failed." }
+}
 ```
 
 #### Antigravity CLI
@@ -104,8 +118,12 @@ python3 "$HOME/official-prompt-tailor/install.py" --target antigravity-cli --use
 Windows PowerShell:
 
 ```powershell
-git -C "$HOME/official-prompt-tailor" pull --ff-only
-if ($? -and $LASTEXITCODE -eq 0) { py -3 "$HOME/official-prompt-tailor/install.py" --target antigravity-cli --user --update }
+& {
+    git -C "$HOME/official-prompt-tailor" pull --ff-only
+    if (-not $? -or $LASTEXITCODE -ne 0) { throw "Git update failed; installation stopped." }
+    python -X utf8 "$HOME/official-prompt-tailor/install.py" --target antigravity-cli --user --update
+    if (-not $? -or $LASTEXITCODE -ne 0) { throw "Skill update failed." }
+}
 ```
 
 ### 実行後の確認
