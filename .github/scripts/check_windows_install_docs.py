@@ -15,7 +15,7 @@ NAME = "official-prompt-tailor"
 
 
 def run(args, **kwargs):
-    completed = subprocess.run(args, capture_output=True, text=True, encoding="utf-8", errors="replace", **kwargs)
+    completed = subprocess.run(args, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60, **kwargs)
     if completed.returncode:
         raise AssertionError(f"{args[0]} exited {completed.returncode}\n{completed.stdout}\n{completed.stderr}")
     return completed.stdout
@@ -25,9 +25,10 @@ def powershell(shell, command, env, cwd, success=True):
     command += "\nif (-not $?) { exit 1 }; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }"
     encoded = base64.b64encode(command.encode("utf-16-le")).decode("ascii")
     completed = subprocess.run([shell, "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
-                               env=env, cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+                               env=env, cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
     if (completed.returncode == 0) != success:
         raise AssertionError(f"Documented command exited {completed.returncode}\n{command}\n{completed.stdout}\n{completed.stderr}")
+    return completed
 
 
 def main():
@@ -36,6 +37,7 @@ def main():
     args = parser.parse_args()
     shell, git = shutil.which(args.shell), shutil.which("git")
     assert os.name == "nt" and shell and git, "Windows, Git and the requested PowerShell are required"
+    print(f"Python {sys.version}; PowerShell " + run([shell, "-NoProfile", "-Command", "$PSVersionTable.PSVersion.ToString()"]).strip(), flush=True)
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     blocks = [("README.md", b) for b in re.findall(r"```powershell\r?\n(.*?)```", readme, re.S)]
     blocks += [("docs/install.md", b) for b in re.findall(r"```powershell\r?\n(.*?)```", (ROOT / "docs/install.md").read_text(encoding="utf-8"), re.S)]
@@ -45,12 +47,10 @@ def main():
                "antigravity": ".gemini/config/skills", "antigravity-cli": ".gemini/antigravity-cli/skills"}
     with tempfile.TemporaryDirectory(prefix="opt-doc-commands-") as tmp:
         base = Path(tmp)
-        seed, origin, bin_dir = base / "seed", base / "origin.git", base / "bin"
+        seed, origin = base / "seed", base / "origin.git"
         seed.mkdir()
-        bin_dir.mkdir()
-        # Exclude py.exe from PATH; this shim still runs the real selected CI interpreter.
-        (bin_dir / "python.cmd").write_text(f'@"{sys.executable}" %*\n@exit /b %errorlevel%\n', encoding="utf-8")
-        env = {**os.environ, "PATH": os.pathsep.join([str(bin_dir), str(Path(git).parent), str(Path(os.environ["SystemRoot"]) / "System32")]),
+        # Run the real python.exe directly, excluding the separate py launcher from PATH.
+        env = {**os.environ, "PATH": os.pathsep.join([str(Path(sys.executable).parent), str(Path(git).parent), str(Path(os.environ["SystemRoot"]) / "System32")]),
                "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1", "PYTHONDONTWRITEBYTECODE": "1"}
         shutil.copy2(ROOT / "install.py", seed / "install.py")
         shutil.copytree(ROOT / ".claude/skills" / NAME, seed / ".claude/skills" / NAME,
@@ -65,7 +65,7 @@ def main():
             project = home / "project 日本語"
             project.mkdir()
             env.update(USERPROFILE=str(home), HOME=str(home))
-            powershell(shell, 'if (Get-Command py -ErrorAction SilentlyContinue) { throw "py must be absent in this test" }', env, base)
+            powershell(shell, 'if (Get-Command py -ErrorAction SilentlyContinue) { throw "py must be absent in this test" }; if ($HOME -ne $env:USERPROFILE) { throw "HOME must be isolated" }', env, base)
             powershell(shell, clone.replace("https://github.com/Mr-Kondo/official-prompt-tailor.git", origin.as_posix()), env, base)
             repo = home / NAME
             # Only documented path placeholders change; executable commands are read verbatim.
@@ -84,10 +84,19 @@ def main():
             assert list(dest.parent.parent.glob(NAME + ".bak-*")) == backups, "Repeated update changed backups"
             installed.write_bytes(expected + b"\nkeep on Git failure\n")
             run([git, "-C", str(repo), "remote", "set-url", "origin", str(base / "missing.git")], env=env)
-            powershell(shell, command, env, base, success=False)
+            failed = powershell(shell, command, env, base, success=False)
+            assert "Git update failed" in failed.stderr
             assert installed.read_bytes() == expected + b"\nkeep on Git failure\n", "Installer ran after Git failure"
             assert list(dest.parent.parent.glob(NAME + ".bak-*")) == backups
-            print(f"PASS: {args.shell} {document} {target}: install, update, repeat, Git failure; no py; space/Japanese paths", flush=True)
+            run([git, "-C", str(repo), "remote", "set-url", "origin", str(origin)], env=env)
+            shutil.rmtree(dest)
+            dest.mkdir()
+            marker = dest / "unrecognised.txt"
+            marker.write_bytes(b"leave alone")
+            failed = powershell(shell, command, env, base, success=False)
+            assert "Skill update failed" in failed.stderr and marker.read_bytes() == b"leave alone"
+            assert list(dest.parent.parent.glob(NAME + ".bak-*")) == backups
+            print(f"PASS: {args.shell} {document} {target}: install, update, repeat, Git failure, installer failure; no py; space/Japanese paths", flush=True)
 
 
 if __name__ == "__main__":

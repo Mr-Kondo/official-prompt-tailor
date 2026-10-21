@@ -32,11 +32,17 @@ git -C "/path/to/official-prompt-tailor" pull --ff-only &&
 python3 "/path/to/official-prompt-tailor/install.py" --target codex --project "/path/to/my-project" --update
 ```
 
-Windows PowerShellの例:
+Windows PowerShell 5.1／PowerShell 7の例（**2種類のパスの置換が必要**）:
+
+`C:/path/to/official-prompt-tailor` は既存cloneの場所、`C:/path/to/my-project` は導入先の既存プロジェクトへ置き換えます。`python --version` で3.9以上が表示されることを確認し、`& {` から最後の `}` までまとめて実行してください。cmd.exe用ではありません。
 
 ```powershell
-git -C "C:/path/to/official-prompt-tailor" pull --ff-only
-if ($? -and $LASTEXITCODE -eq 0) { py -3 "C:/path/to/official-prompt-tailor/install.py" --target codex --project "C:/path/to/my-project" --update }
+& {
+    git -C "C:/path/to/official-prompt-tailor" pull --ff-only
+    if (-not $? -or $LASTEXITCODE -ne 0) { throw "Git update failed; installation stopped." }
+    python -X utf8 "C:/path/to/official-prompt-tailor/install.py" --target codex --project "C:/path/to/my-project" --update
+    if (-not $? -or $LASTEXITCODE -ne 0) { throw "Skill update failed." }
+}
 ```
 
 Claude Codeなら `--target claude-code`、Antigravityなら `--target antigravity` または `--target antigravity-cli` にします。ユーザー配置の更新は、`--project "…"` を `--user` に替えます。更新後は、利用する製品で新しいセッションを開いてください。
@@ -45,7 +51,7 @@ Claude Codeなら `--target claude-code`、Antigravityなら `--target antigravi
 
 ## 各オプションの例
 
-次のコマンドは、リポジトリのルートで実行するテンプレートです。`/path/to/my-project` と `/path/to/export` は、実在するディレクトリへ置き換えてください。Windowsでは `python3` を `py -3` または `python` に読み替えます。
+次のコマンドは、リポジトリのルートで実行するテンプレートです。`/path/to/my-project` と `/path/to/export` は、実在するディレクトリへ置き換えてください。Windowsでは `python3` を `python` に読み替えます。`py -3` だけが使える環境では、Windows例の `python` も `py -3` に置き換えます。
 
 ```sh
 python3 install.py --target claude-code --project "/path/to/my-project" --gitignore
@@ -123,3 +129,5 @@ Claude Codeの[公式の同期手順](https://code.claude.com/docs/en/skills#ski
 
 - [Git: git pull](https://git-scm.com/docs/git-pull): `--ff-only` は、履歴が分岐した場合に更新を止めます。
 - [Microsoft: PowerShell 5.1の自動変数](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_automatic_variables?view=powershell-5.1): Windows例の `$?` と `$LASTEXITCODE` で、Gitの成功を確認します。
+
+- [Microsoft: WindowsでのPython](https://learn.microsoft.com/en-us/windows/dev-environment/python): Pythonの導入方法によって `py` ランチャーがない構成があるため、Windows例は `python` を使います。
