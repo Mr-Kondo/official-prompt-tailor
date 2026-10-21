@@ -58,7 +58,7 @@ python3 <skill-dir>/scripts/evidence.py fetch --input outputs/official-prompt-ta
 - ネットワークが許可されていないと blocked になる。接続先は README に列挙した公式ドメインだけ。許可設定を勝手に変えず、ユーザーに伝える。
 - `--mode cache --cache <以前の run>` は 7 日以内の取得物を明示的に再利用するときだけ。cache は PASS_CACHE と表示する。
 - 登録外への移転・未登録 URL は取得されない。レジストリ更新の候補として報告する。
-- **資料が 0 件**(`acquisition.json` の `selected_sources` が `[]`)で終わる入力がある。故障ではない。`target_surface` と `model_id` が `unknown` のとき、利用先 × `purpose` の一部で、その入力で使える公式規則がなく、取得する資料がないため(`sources --target <target_id> --purpose <purpose>` が、通信せずに調べる)。この場合、次のとおり進める: 読む資料と選ぶ規則はない(手順 3 の `drift` と `rules` は実行し、どちらも空) / 変更は `editorial` か `inference` だけで、`official` は書かず、`generation_status` は `provisional` にする / `verify` は `INCOMPLETE`(`no_applicable_official_source` と `provisional_generation`)で、`--host-log` を付けても `PASS_LIVE` にならない(仕様) / 最終回答の「参照検証」は `INCOMPLETE`、改稿は候補。(3)に「この入力には取得する公式資料がない」と書く。依頼が示す `target_surface`(例: `api`)や `model_id` が利用先に当てはまるなら、それを指定すると資料と規則が加わることがある、とも書く(`sources --target <target_id> --surface <値>` で確かめられる)。依頼にない値は推定で埋めず、資料が付く `purpose` に寄せない(別の `purpose` なら資料が付くことは、(3)に書く)。詳細は [references/evidence-contract.md](references/evidence-contract.md) の「資料が 0 件の入力」。
+- **資料が 0 件**(`selected_sources` が `[]`)なら、[証拠契約の「資料が 0 件の入力」](references/evidence-contract.md)を読む。`target_surface` と `model_id` が `unknown` のとき、利用先×`purpose` の一部で使える公式規則がないためで、故障ではない。手順3の `drift`・`rules` は実行するが、本文・規則は空。変更は `editorial` / `inference` のみ、`generation_status: provisional` とし、参照検証 `INCOMPLETE`(`no_applicable_official_source`)の候補として返す。`--host-log` を付けても `PASS_LIVE` にはならない。最終回答の(3)に資料がない理由と、依頼が示す `target_surface`・`model_id` や別の `purpose` で資料が加わる可能性を書く。`sources --target <target_id> --purpose <purpose> --surface <値>` で通信せずに確かめる。資料を付けるために値を推定したり、purposeを変えたりしない。
 
 ## 3. 本文を読み、最適化する
 
@@ -81,7 +81,7 @@ print("original_sha256", sha(orig), "optimized_sha256", sha(opt))
 PY
 ```
 
-`recommendations.json` の項目: `schema_version`(1)、`target_id`、`target_surface`、`model_id`、`generation_status`(`complete` / `provisional`)、`original_sha256`、`optimized_sha256`、`changes`(各 change は `change_id` `kind` `rule_id` `source_id` `body_sha256` `source_start_line` `source_end_line` `exact_excerpt` `before_start` `before_end` `after_start` `after_end` `after_excerpt` `rationale`)。`after_excerpt` は `optimized.md` の `after_start`〜`after_end` の区間と完全に一致させる(短い抜粋にしない)。`rationale` は利用者向けの短い理由で、内部の思考過程を書かない。
+`recommendations.json` の全項目は次の完成例に従う。`generation_status` は `complete` / `provisional`。`after_excerpt` は `optimized.md` の `after_start`〜`after_end` の区間と完全に一致させる(短い抜粋にしない)。`rationale` は利用者向けの短い理由で、内部の思考過程を書かない。
 
 完成例(`editorial` と `official` を 1 件ずつ)は [references/recommendations-example.md](references/recommendations-example.md)。`recommendations.json` を書く前に開く。差分の全区間を change の区間で覆う決まりも、そこにある。例の digest・offset・行番号は使わず、その run の実測値に置き換える。
 

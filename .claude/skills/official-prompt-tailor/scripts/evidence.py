@@ -1089,7 +1089,7 @@ def verify(run, mode, host_log=None):
     _check_binding(R, rec, orig, opt)
 
     # read observation
-    _check_reads(R, run, rec, acq, bodies, sources_out, host_log, ctx, inp["execution_host"])
+    _check_reads(R, run, rec, bodies, sources_out, host_log, ctx, inp["execution_host"])
     ctx["counts"] = counts
     return _finish(run, R, mode, ctx, sources_out, now)
 
@@ -1418,12 +1418,11 @@ def _antigravity_numbered_output(text, path, version="1.4.0"):
         return ""
     lines = text[match.end():].splitlines()
     numbered = []
-    for line in lines:
+    for first, line in enumerate(lines):
         if line.startswith(f"{start}: "):
             break
     else:
         return ""
-    first = lines.index(line)
     for number, line in enumerate(lines[first:first + end - start + 1], start):
         prefix = f"{number}: "
         if not line.startswith(prefix):
@@ -1584,7 +1583,7 @@ def _resolves_to(fp, targets):
     return False
 
 
-def _check_reads(R, run, rec, acq, bodies, sources_out, host_log, ctx, host):
+def _check_reads(R, run, rec, bodies, sources_out, host_log, ctx, host):
     ctx["host_log_sha256"], ctx["host"] = None, host
     if host not in LOG_ADAPTER_HOSTS:  # a log from another product is never parsed or guessed at
         R.inc("read_observation", "no_log_adapter_for_host", f"no read-observation adapter for execution_host {host}")
@@ -1999,7 +1998,7 @@ def case_set_hash(labels):
     return sha_bytes(json.dumps(sorted(l["case_id"] for l in labels)).encode("utf-8"))
 
 
-def check_calibration(R, review, cal_path, now):
+def check_calibration(R, review, cal_path):
     cal_p = Path(cal_path)
     if not cal_p.is_file():
         R.inc("calibration", "calibration_missing", "calibration_ref file not found")
@@ -2067,7 +2066,7 @@ def assess(run, review_path, allow_mock=False):
         if review["review_method"] == "unavailable" or review["status"] == "NOT_REVIEWED":
             R.inc("provenance", "not_reviewed", "no semantic review has been performed")
         else:
-            cal_summary = _assess_review(R, run, review, rec, inp, acq, allow_mock, now)
+            cal_summary = _assess_review(R, run, review, rec, inp, acq, allow_mock)
     except ContractError as e:
         R.fail("structure", "invalid_review", str(e))
     except Unreadable as e:
@@ -2086,7 +2085,7 @@ def assess(run, review_path, allow_mock=False):
     return out
 
 
-def _assess_review(R, run, review, rec, inp, acq, allow_mock, now):
+def _assess_review(R, run, review, rec, inp, acq, allow_mock):
     orig, opt = read_text(run / "original.md"), read_text(run / "optimized.md")
     if review["review_method"] == "mock" and not allow_mock:
         R.inc("provenance", "mock_not_production", "mock reviews are offline-test only")
@@ -2170,7 +2169,7 @@ def _assess_review(R, run, review, rec, inp, acq, allow_mock, now):
     if not review["calibration_ref"] or not review["calibration_sha256"]:
         R.inc("calibration", "uncalibrated", "no calibration record referenced; scorer is uncalibrated")
         return None
-    return check_calibration(R, review, review["calibration_ref"], now)
+    return check_calibration(R, review, review["calibration_ref"])
 
 
 def _check_quote(R, ck, ch, bodies):
@@ -2451,10 +2450,7 @@ def compare(run, plan_path, results_path, cases_path="evals/prompt-tailor-cases.
         ev["repeat_variability"] = {v: statistics.fmean(s[v]["sd"] for s in held) for v in ("original", "optimized")}
         ev["cost"] = {"original_seconds_per_run": statistics.fmean(s["original"]["seconds"] for s in held),
                       "optimized_seconds_per_run": statistics.fmean(s["optimized"]["seconds"] for s in held)}
-    if cv:
-        return done("INCOMPLETE")
-    if inc:
-        # a recorded critical violation is not offset by missing evidence elsewhere, but untrusted rows prove nothing
+    if cv or inc:
         return done("INCOMPLETE")
     ad = plan["adoption"]
     if crit_o > ad["max_critical_violations"]:
@@ -2466,7 +2462,7 @@ def compare(run, plan_path, results_path, cases_path="evals/prompt-tailor-cases.
         inc.append("held-out cases missing or fewer than adoption.min_cases")
         return done("INCOMPLETE")
     n = len(held)
-    delta = _mean([s["delta"] for s in held if s["delta"] is not None]) or 0.0
+    delta = _mean([s["delta"] for s in held]) or 0.0
     t_ok = True
     if ad["max_time_increase_ratio"] is not None and ev["cost"]["original_seconds_per_run"] > 0:
         t_ok = ev["cost"]["optimized_seconds_per_run"] <= ev["cost"]["original_seconds_per_run"] * (1 + ad["max_time_increase_ratio"])
