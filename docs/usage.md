@@ -62,7 +62,13 @@ python3 .claude/skills/official-prompt-tailor/scripts/evidence.py sources --run 
 - Claude Codeの別のエージェント(サブエージェント)に実行させたときは、そのエージェント自身の記録(`~/.claude/projects/<プロジェクト>/<セッション>/subagents/agent-<id>.jsonl`)を渡します。メインのセッションの記録には、サブエージェントが読んだ行は入りません。`verify --host-log` にも同じ記録を渡せます。全メッセージが 1 つの `agentId` のものである記録は、そのエージェントの記録として全体を読みます。
 - 判定は、`CONSISTENT`(0)、`INCONSISTENT`(1)、`INCOMPLETE`(2)です。本文のハッシュが記録と違う、選択が registry の規則と違う、範囲外の規則を引用している、などが `INCONSISTENT` です。
 
+## 日本語のプロンプトの推敲
+
+`japanese-readability-editor` が実行ホストで利用でき、その `SKILL.md` を読める場合だけ、日本語のプロンプト案をモードBで推敲します。原意・数値・条件・否定・例外・出力形式を保ち、重複や冗長な表現を整理します。利用できない場合は使わず、そのまま進めます。自動インストールや追加取得は行いません。推敲後の最終版で変更記録と検証を行い、推敲そのものを独立した意味審査や改善効果の証明にはしません。
+
 ## 4. INCOMPLETE の例
+
+動作や出力内容の問題を記録する場合は、[問題報告の作り方](feedback.md)と[テンプレート](templates/problem-report.md)を使います。
 
 実行ログを渡さない場合、読取りを観測できません。他がすべて合格でも、総合は `INCOMPLETE` です。2026-10-14 に実際に取得した run-001 と run-002 で確認した出力は、次のとおりです。
 
