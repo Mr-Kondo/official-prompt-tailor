@@ -68,6 +68,8 @@ python3 .claude/skills/official-prompt-tailor/scripts/evidence.py sources --run 
 
 v0.6.11から、エージェントは[推敲連携の手順](../.claude/skills/official-prompt-tailor/references/readability.md)で実行・スキップ・失敗をrun内の `readability.json` に自動保存します。通常の `verify` が `readability-verification.json` を自動保存し、最終版との一致と証拠の欠損・変更を検査します。利用者が記録を手入力する必要はありません。旧runは `NOT_RECORDED`、スキップは `SKIPPED_REPORTED`、実行記録が一致した場合は `CONSISTENT_EXECUTION_RECORD` と表示します。参照検証とは別の記録であり、モデルの理解・意味保存・品質向上は保証しません。
 
+v0.6.12から、ツールが終了コード0を返しても、比較結果の入力パス・主要項目の型や、モードBの9検査が不正・欠損なら実行完了にしません。検証結果の `comparison_candidates` に、数値・否定など、見比べる候補の検査名も保存します。`[]` は候補なし、`null` は有効な候補一覧を示せない状態です。候補がなくても、意味審査や品質評価の合格にはなりません。失敗後に最終版を変更しても、失敗は `EXECUTION_FAILED` と表示します。
+
 ## 4. INCOMPLETE の例
 
 動作や出力内容の問題を記録する場合は、[問題報告の作り方](feedback.md)と[テンプレート](templates/problem-report.md)を使います。
