@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""official-prompt-tailor evidence tool: fetch / verify / assess / compare / drift / rules / sources.
+"""official-prompt-tailor evidence tool: fetch / verify / assess / compare / drift / rules / sources / readability.
 
 Standard library only. It verifies recorded evidence (acquisition, hashes, citations,
 scope, change binding, observed reads, review records, evaluation records); it does not
@@ -17,6 +17,7 @@ import re
 import shlex
 import socket
 import statistics
+import subprocess
 import sys
 import tempfile
 import time
@@ -1639,7 +1640,142 @@ def _finish(run, R, mode, ctx, sources_out, now):
                            f"Host-log adapter {LOG_ADAPTERS.get(ctx.get('host'), '(none)')} trusts the path the operator supplied via --host-log."],
            "change_counts": ctx.get("counts"), "host_log_sha256": ctx.get("host_log_sha256")}
     write_json(run / "verification.json", rep)
+    check_readability(run)
     return rep
+
+
+def record_readability(run, editor_dir=None, skip=None):
+    """Record tool execution, never a semantic or independent host-observation verdict."""
+    run = Path(run).resolve()
+    if not run.is_dir():
+        raise Unreadable("readability run directory not found")
+    receipt = {"schema_version": 1, "status": "EXECUTION_FAILED", "reason": "not_completed",
+               "optimized_sha256_bytes": None, "before_sha256_bytes": None,
+               "attempt": None, "files": {}, "tools": {}, "checked_at": iso(utcnow())}
+    try:
+        after = _read_run(run, "optimized.md")
+        receipt["optimized_sha256_bytes"] = sha_file(after)
+        write_json(run / "readability.json", receipt)  # an interrupted new attempt must not leave an old success active
+        if skip:
+            if skip not in ("unavailable", "non_japanese"):
+                raise ContractError("invalid readability skip reason")
+            receipt.update(status="SKIPPED_REPORTED", reason=skip)
+        else:
+            before = _read_run(run, "readability-before.md")
+            if before.is_symlink() or after.is_symlink() or before.samefile(after):
+                raise ContractError("readability inputs must be distinct regular files")
+            editor = Path(editor_dir).resolve()
+            scripts = [editor / "scripts" / name for name in ("compare_rewrite.py", "make_change_report.py")]
+            if not (editor / "SKILL.md").is_file() or any(not p.is_file() for p in scripts):
+                raise Unreadable("readability editor is incomplete")
+            attempt = Path(tempfile.mkdtemp(prefix="readability-", dir=run))
+            receipt["attempt"] = attempt.name
+            (attempt / "before.md").write_bytes(before.read_bytes())
+            (attempt / "after.md").write_bytes(after.read_bytes())
+            receipt["before_sha256_bytes"] = sha_file(attempt / "before.md")
+            receipt["optimized_sha256_bytes"] = sha_file(attempt / "after.md")
+            receipt["tools"]["SKILL.md"] = {"sha256_bytes": sha_file(editor / "SKILL.md")}
+            commands = [(scripts[0], "compare", [str(attempt / "before.md"), str(attempt / "after.md"), "--json"]),
+                        (scripts[1], "change-report", ["--original", str(attempt / "before.md"), "--result", str(attempt / "after.md"),
+                                                     "--mode", "B", "--out-dir", str(attempt / "reports")])]
+            for script, name, args in commands:
+                tool = {"sha256_bytes": sha_file(script), "returncode": None}
+                receipt["tools"][script.name] = tool
+                command = [sys.executable, "-B", "-X", "utf8", str(script), *args]
+                tool["command"] = command
+                tool["started_at"] = iso(utcnow())
+                with (attempt / (name + ".json")).open("wb") as out, (attempt / (name + ".stderr")).open("wb") as err:
+                    result = subprocess.run(command, stdout=out, stderr=err, timeout=30, check=False)
+                tool["returncode"] = result.returncode
+                tool["finished_at"] = iso(utcnow())
+                if result.returncode != 0:
+                    raise ContractError("readability tool failed: " + name)
+                data = load_json(attempt / (name + ".json"))
+                if not isinstance(data, dict) or (name == "compare" and not {"numbers", "urls", "unmatched"} <= data.keys()):
+                    raise ContractError("invalid readability tool output")
+                if name == "change-report":
+                    saved = list((attempt / "reports").glob("*.json"))
+                    if data.get("kind") != "jre-change-report" or len(saved) != 1 or load_json(saved[0]) != data:
+                        raise ContractError("saved readability report missing or different")
+                if (sha_file(script) != tool["sha256_bytes"] or sha_file(attempt / "before.md") != receipt["before_sha256_bytes"]
+                        or sha_file(attempt / "after.md") != receipt["optimized_sha256_bytes"]):
+                    raise ContractError("readability input or entry script changed during execution")
+            receipt.update(status="EXECUTION_RECORDED", reason="tools_completed")
+    except (OSError, ValueError, TypeError, ContractError, Unreadable, subprocess.TimeoutExpired) as ex:
+        receipt["reason"] = "timeout" if isinstance(ex, subprocess.TimeoutExpired) else "execution_or_artifact_error"
+    finally:
+        if receipt["attempt"]:
+            try:
+                artifacts = [p for p in attempt.rglob("*") if p.is_file()]
+                if any(p.is_symlink() or not p.resolve().is_relative_to(attempt) for p in artifacts):
+                    raise OSError("artifact outside attempt")
+                receipt["files"] = {p.relative_to(attempt).as_posix(): sha_file(p) for p in artifacts}
+            except OSError:
+                receipt.update(status="EXECUTION_FAILED", reason="artifact_collection_failed", files={})
+        write_json(run / "readability.json", receipt)
+    check_readability(run)
+    return receipt
+
+
+def check_readability(run):
+    """Inspect saved artifacts only; verification never executes the optional editor."""
+    run = Path(run).resolve()
+    report = {"schema_version": 1, "status": "NOT_RECORDED", "reason": "no_receipt",
+              "evidence": "local_runner_record_not_independently_observed", "semantic_review": "NOT_REVIEWED"}
+    path = run / "readability.json"
+    try:
+        if path.exists() or path.is_symlink():
+            if path.is_symlink():
+                raise ContractError("receipt must not be a symlink")
+            record = load_json(path)
+            expected = {"schema_version", "status", "reason", "optimized_sha256_bytes", "before_sha256_bytes", "attempt", "files", "tools", "checked_at"}
+            if (not isinstance(record, dict) or record.keys() != expected or type(record["schema_version"]) is not int or record["schema_version"] != 1
+                    or record["status"] not in ("SKIPPED_REPORTED", "EXECUTION_RECORDED", "EXECUTION_FAILED")
+                    or not isinstance(record["files"], dict) or not isinstance(record["tools"], dict) or not isinstance(record["reason"], str)
+                    or (record["optimized_sha256_bytes"] is None and record["status"] != "EXECUTION_FAILED")
+                    or (record["optimized_sha256_bytes"] is not None and (not isinstance(record["optimized_sha256_bytes"], str)
+                        or not SHA_RE.fullmatch(record["optimized_sha256_bytes"])))):
+                raise ContractError("invalid readability receipt")
+            report.update(status=record["status"], reason=record["reason"])
+            if record["optimized_sha256_bytes"] is None:
+                report.update(status="EXECUTION_FAILED", reason=record["reason"])
+            elif sha_file(_read_run(run, "optimized.md")) != record["optimized_sha256_bytes"]:
+                report.update(status="STALE", reason="final_prompt_changed")
+            elif record["status"] == "SKIPPED_REPORTED":
+                if (record["reason"] not in ("unavailable", "non_japanese") or record["files"] or record["tools"]
+                        or record["attempt"] is not None or record["before_sha256_bytes"] is not None):
+                    raise ContractError("invalid readability skip")
+            elif record["attempt"] is not None:
+                if not isinstance(record["attempt"], str) or not re.fullmatch(r"readability-[a-z0-9_]+", record["attempt"]):
+                    raise ContractError("invalid readability attempt")
+                attempt = run / record["attempt"]
+                if attempt.is_symlink() or not attempt.is_dir():
+                    raise ContractError("invalid readability attempt directory")
+                for name, digest in record["files"].items():
+                    file = attempt / name
+                    if (Path(name).is_absolute() or ".." in Path(name).parts or file.is_symlink()
+                            or not file.resolve().is_relative_to(attempt.resolve()) or not attempt.resolve().is_relative_to(run)
+                            or not isinstance(digest, str) or not SHA_RE.fullmatch(digest) or sha_file(file) != digest):
+                        raise ContractError("readability artifact missing or changed")
+                if record["status"] == "EXECUTION_RECORDED":
+                    required = {"before.md", "after.md", "compare.json", "compare.stderr", "change-report.json", "change-report.stderr"}
+                    if not required <= record["files"].keys() or len(record["files"]) != 7:
+                        raise ContractError("incomplete readability artifacts")
+                    if (sha_file(attempt / "before.md") != record["before_sha256_bytes"]
+                            or sha_file(attempt / "after.md") != record["optimized_sha256_bytes"]):
+                        raise ContractError("readability input binding mismatch")
+                    for name in ("compare_rewrite.py", "make_change_report.py"):
+                        tool = record["tools"].get(name, {})
+                        if (not isinstance(tool, dict) or type(tool.get("returncode")) is not int or tool["returncode"] != 0
+                                or not isinstance(tool.get("sha256_bytes"), str) or not SHA_RE.fullmatch(tool["sha256_bytes"])):
+                            raise ContractError("readability tool did not complete")
+                    report["status"] = "CONSISTENT_EXECUTION_RECORD"
+            elif record["status"] == "EXECUTION_RECORDED":
+                raise ContractError("readability attempt missing")
+    except (OSError, ValueError, TypeError, KeyError, ContractError, Unreadable):
+        report.update(status="INVALID_RECORD", reason="receipt_or_artifact_invalid")
+    write_json(run / "readability-verification.json", report)
+    return report
 
 
 # ---------------------------------------------------------------- sources
@@ -2502,6 +2638,11 @@ def main(argv=None):
     v.add_argument("--run", required=True)
     v.add_argument("--mode", choices=("live", "cache"), required=True)
     v.add_argument("--host-log")
+    edit = sub.add_parser("readability")
+    edit.add_argument("--run", required=True)
+    edit_mode = edit.add_mutually_exclusive_group(required=True)
+    edit_mode.add_argument("--editor-dir")
+    edit_mode.add_argument("--skip", choices=("unavailable", "non_japanese"))
     a = sub.add_parser("assess")
     a.add_argument("--run", required=True)
     a.add_argument("--review", required=True)
@@ -2530,6 +2671,11 @@ def main(argv=None):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8")
     try:
+        if args.cmd == "readability":
+            rep = record_readability(args.run, args.editor_dir, args.skip)
+            checked = check_readability(args.run)
+            code = 0 if checked["status"] in ("CONSISTENT_EXECUTION_RECORD", "SKIPPED_REPORTED") else 1
+            return _emit("readability", code, {"execution": rep, "verification": checked}, checked["status"])
         if args.cmd == "fetch":
             code, acq = do_fetch(args.input, args.out, args.mode, args.cache)
             bad = [f"{e['source_id']}={e['status']}({e['error']})" for e in acq["sources"] if e["status"] != ("live" if args.mode == "live" else "cache")]

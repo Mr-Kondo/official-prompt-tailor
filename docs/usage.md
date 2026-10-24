@@ -66,6 +66,8 @@ python3 .claude/skills/official-prompt-tailor/scripts/evidence.py sources --run 
 
 `japanese-readability-editor` が実行ホストで利用でき、その `SKILL.md` を読める場合だけ、日本語のプロンプト案をモードBで推敲します。原意・数値・条件・否定・例外・出力形式を保ち、重複や冗長な表現を整理します。利用できない場合は使わず、そのまま進めます。自動インストールや追加取得は行いません。推敲後の最終版で変更記録と検証を行い、推敲そのものを独立した意味審査や改善効果の証明にはしません。
 
+v0.6.11から、エージェントは[推敲連携の手順](../.claude/skills/official-prompt-tailor/references/readability.md)で実行・スキップ・失敗をrun内の `readability.json` に自動保存します。通常の `verify` が `readability-verification.json` を自動保存し、最終版との一致と証拠の欠損・変更を検査します。利用者が記録を手入力する必要はありません。旧runは `NOT_RECORDED`、スキップは `SKIPPED_REPORTED`、実行記録が一致した場合は `CONSISTENT_EXECUTION_RECORD` と表示します。参照検証とは別の記録であり、モデルの理解・意味保存・品質向上は保証しません。
+
 ## 4. INCOMPLETE の例
 
 動作や出力内容の問題を記録する場合は、[問題報告の作り方](feedback.md)と[テンプレート](templates/problem-report.md)を使います。
