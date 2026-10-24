@@ -1,6 +1,7 @@
 """Execution receipts use synthetic editor scripts, not a live model or quality judge."""
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -26,11 +27,19 @@ class ReadabilityTests(unittest.TestCase):
         scripts.mkdir(parents=True)
         (self.editor / "SKILL.md").write_text("Artificial editor fixture\n", encoding="utf-8")
         self.compare = scripts / "compare_rewrite.py"
-        self.compare.write_text('import json; print(json.dumps({"numbers": {}, "urls": {}, "unmatched": {"after": ["candidate"]}}))', encoding="utf-8")
+        self.compare_source = '''import json,sys
+output={"before":sys.argv[1],"after":sys.argv[2],
+    **{key:{"missing":[],"added":[]} for key in ("numbers","urls","code","terms")},
+    "unmatched":{"before":[],"after":[{"line":1,"text":"candidate"}]}}
+print(json.dumps(output))
+'''
+        self.compare.write_text(self.compare_source, encoding="utf-8")
         (scripts / "make_change_report.py").write_text('''import json,sys
 from pathlib import Path
 p=Path(sys.argv[sys.argv.index('--out-dir')+1]); p.mkdir()
-data={"kind":"jre-change-report","checks":{"numbers":{"status":"candidate"}}}
+data={"schema_version":1,"kind":"jre-change-report","context":{"mode":"B"},
+      "checks":{key:{"status":"candidate" if key=="added_content" else "no_candidate","method":"deterministic"}
+      for key in ("numbers","urls","code","terms","added_content","omitted_content","negation","modality","style")}}
 (p/'saved.json').write_text(json.dumps(data),encoding='utf-8')
 print(json.dumps(data))
 ''', encoding="utf-8")
@@ -48,6 +57,103 @@ print(json.dumps(data))
         self.assertEqual(len(record["files"]), 7)
         self.assertEqual(record["tools"]["compare_rewrite.py"]["returncode"], 0)
         self.assertEqual(self.read("readability-verification.json")["semantic_review"], "NOT_REVIEWED")
+
+    def test_candidates_stay_separate_from_execution_and_semantic_review(self):
+        self.execute()
+        report = ev.check_readability(self.run)
+        self.assertEqual(report["status"], "CONSISTENT_EXECUTION_RECORD")
+        self.assertEqual(report["comparison_candidates"], ["added_content"])
+        self.assertEqual(report["semantic_review"], "NOT_REVIEWED")
+        ev.record_readability(self.run, skip="unavailable")
+        self.assertIsNone(ev.check_readability(self.run)["comparison_candidates"])
+
+    def test_no_candidate_does_not_mean_semantic_approval(self):
+        script = self.editor / "scripts/make_change_report.py"
+        script.write_text(script.read_text(encoding="utf-8").replace('"candidate" if key=="added_content" else "no_candidate"', '"no_candidate"'), encoding="utf-8")
+        self.execute()
+        report = ev.check_readability(self.run)
+        self.assertEqual(report["comparison_candidates"], [])
+        self.assertEqual(report["semantic_review"], "NOT_REVIEWED")
+
+    def test_archived_run_keeps_valid_input_binding(self):
+        self.execute()
+        archived = self.root / "archived-run"
+        shutil.copytree(self.run, archived)
+        self.assertEqual(ev.check_readability(archived)["status"], "CONSISTENT_EXECUTION_RECORD")
+
+    def test_failed_run_stays_failed_after_final_prompt_changes(self):
+        self.compare.write_text('raise SystemExit(7)', encoding="utf-8")
+        self.execute()
+        (self.run / "optimized.md").write_text("changed", encoding="utf-8")
+        self.assertEqual(ev.check_readability(self.run)["status"], "EXECUTION_FAILED")
+
+    def test_missing_final_file_clears_candidates(self):
+        self.execute()
+        (self.run / "optimized.md").unlink()
+        report = ev.check_readability(self.run)
+        self.assertEqual(report["status"], "INVALID_RECORD")
+        self.assertIsNone(report["comparison_candidates"])
+
+    def test_invalid_skip_is_not_hidden_by_staleness(self):
+        record = ev.record_readability(self.run, skip="unavailable")
+        record["reason"] = "invented"
+        ev.write_json(self.run / "readability.json", record)
+        (self.run / "optimized.md").write_text("changed", encoding="utf-8")
+        self.assertEqual(ev.check_readability(self.run)["status"], "INVALID_RECORD")
+
+    def test_verifier_rechecks_output_contract_and_skill_hash(self):
+        for mutation in ("wrong_mode", "wrong_comparison", "missing_skill", "wrong_saved_report"):
+            with self.subTest(mutation=mutation):
+                record = self.execute()
+                attempt = self.run / record["attempt"]
+                if mutation == "missing_skill":
+                    record["tools"].pop("SKILL.md")
+                elif mutation == "wrong_mode":
+                    report = self.read(record["attempt"] + "/change-report.json")
+                    report["context"]["mode"] = "A"
+                    ev.write_json(attempt / "change-report.json", report)
+                elif mutation == "wrong_comparison":
+                    ev.write_json(attempt / "compare.json", {})
+                else:
+                    ev.write_json(attempt / "reports/saved.json", {})
+                record["files"] = {name:ev.sha_file(attempt / name) for name in record["files"]}
+                ev.write_json(self.run / "readability.json", record)
+                (self.run / "optimized.md").write_text("changed", encoding="utf-8")
+                self.assertEqual(ev.check_readability(self.run)["status"], "INVALID_RECORD")
+                (self.run / "optimized.md").write_text("上限は100文字程度を予定。\n", encoding="utf-8")
+
+    def test_rejects_wrong_comparison_shapes_and_input_paths(self):
+        for mutation in (
+            'output["numbers"]=None',
+            'output["urls"]={"missing":[],"added":False}',
+            'output["unmatched"]={"before":[],"after":[3]}',
+            'output["numbers"]={"missing":[{"line":True,"text":"100"}],"added":[]}',
+            'output["before"]="unrelated.md"',
+            'output["after"]="unrelated.md"',
+        ):
+            with self.subTest(mutation=mutation):
+                script = self.compare_source.replace('print(json.dumps(output))', mutation + '\nprint(json.dumps(output))')
+                self.compare.write_text(script, encoding="utf-8")
+                self.assertEqual(self.execute()["status"], "EXECUTION_FAILED")
+
+    def test_nonempty_comparison_locations_remain_valid(self):
+        source = self.compare_source.replace('print(json.dumps(output))',
+            'output["numbers"]={"missing":[{"line":1,"text":"100件"}],"added":[{"line":1,"text":"200件"}]}\nprint(json.dumps(output))')
+        self.compare.write_text(source, encoding="utf-8")
+        self.assertEqual(self.execute()["status"], "EXECUTION_RECORDED")
+
+    def test_rejects_incomplete_wrong_mode_or_claimed_human_report(self):
+        script = self.editor / "scripts/make_change_report.py"
+        source = script.read_text(encoding="utf-8")
+        for mutation in (
+            'data["context"]["mode"]="A"',
+            'data["checks"].pop("negation")',
+            'data["checks"]["numbers"]={"status":"candidate","method":"human"}',
+            'data["checks"]["numbers"]={"status":[],"method":"deterministic"}',
+        ):
+            with self.subTest(mutation=mutation):
+                script.write_text(source.replace("(p/'saved.json')", mutation + "\n(p/'saved.json')"), encoding="utf-8")
+                self.assertEqual(self.execute()["status"], "EXECUTION_FAILED")
 
     def test_rerun_retains_prior_attempt_and_before_snapshot(self):
         first = self.execute()
@@ -81,7 +187,7 @@ print(json.dumps(data))
         for text in ('print("not JSON")', 'print("{}")'):
             self.compare.write_text(text, encoding="utf-8")
             self.assertEqual(self.execute()["status"], "EXECUTION_FAILED")
-        self.compare.write_text('print(\'{"numbers":{},"urls":{},"unmatched":{}}\')', encoding="utf-8")
+        self.compare.write_text(self.compare_source, encoding="utf-8")
         (self.editor / "scripts/make_change_report.py").write_text('print(\'{"kind":"jre-change-report"}\')', encoding="utf-8")
         self.assertEqual(self.execute()["status"], "EXECUTION_FAILED")
 
@@ -128,8 +234,7 @@ print(json.dumps(data))
         self.compare.write_text('''import json,sys
 from pathlib import Path
 (Path(sys.argv[2]).parent.parent/'optimized.md').write_text('changed',encoding='utf-8')
-print(json.dumps({"numbers":{},"urls":{},"unmatched":{}}))
-''', encoding="utf-8")
+''' + self.compare_source, encoding="utf-8")
         result = subprocess.run([sys.executable, str(Path(ev.__file__)), "readability", "--run", str(self.run), "--editor-dir", str(self.editor)], capture_output=True)
         self.assertEqual(result.returncode, 1, result.stderr)
         output = json.loads(result.stdout)

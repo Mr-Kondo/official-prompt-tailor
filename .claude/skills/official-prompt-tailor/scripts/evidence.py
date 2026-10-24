@@ -1644,6 +1644,44 @@ def _finish(run, R, mode, ctx, sources_out, now):
     return rep
 
 
+def validate_readability_comparison(attempt, input_paths):
+    comparison = load_json(attempt / "compare.json")
+    if (not isinstance(comparison, dict) or not isinstance(input_paths, list) or len(input_paths) != 2
+            or any(not isinstance(path, str) or comparison.get(key) != path
+                   or Path(path).parts[-2:] != (attempt.name, key + ".md")
+                   for key, path in zip(("before", "after"), input_paths))):
+        raise ContractError("readability comparison input mismatch")
+    sections = {key: ("missing", "added") for key in ("numbers", "urls", "code", "terms")}
+    sections["unmatched"] = ("before", "after")
+    for name, keys in sections.items():
+        section = comparison.get(name)
+        if not isinstance(section, dict):
+            raise ContractError("invalid readability comparison section")
+        for key in keys:
+            entries = section.get(key)
+            if not isinstance(entries, list) or any(not isinstance(entry, dict) or type(entry.get("line")) is not int
+                    or entry["line"] < 1 or not isinstance(entry.get("text"), str) for entry in entries):
+                raise ContractError("invalid readability comparison entries")
+
+
+def readability_candidates(attempt):
+    change_report = load_json(attempt / "change-report.json")
+    if (not isinstance(change_report, dict) or type(change_report.get("schema_version")) is not int
+            or change_report["schema_version"] != 1 or change_report.get("kind") != "jre-change-report"
+            or not isinstance(change_report.get("context"), dict) or change_report["context"].get("mode") != "B"):
+        raise ContractError("invalid readability change report")
+    checks = change_report.get("checks")
+    names = ("numbers", "urls", "code", "terms", "added_content", "omitted_content", "negation", "modality", "style")
+    if not isinstance(checks, dict) or not set(names) <= checks.keys():
+        raise ContractError("incomplete readability checks")
+    for name in names:
+        check = checks[name]
+        if (not isinstance(check, dict) or check.get("status") not in ("candidate", "no_candidate")
+                or check.get("method") != "deterministic"):
+            raise ContractError("invalid automatic readability check")
+    return [name for name in names if checks[name]["status"] == "candidate"]
+
+
 def record_readability(run, editor_dir=None, skip=None):
     """Record tool execution, never a semantic or independent host-observation verdict."""
     run = Path(run).resolve()
@@ -1690,12 +1728,13 @@ def record_readability(run, editor_dir=None, skip=None):
                 tool["finished_at"] = iso(utcnow())
                 if result.returncode != 0:
                     raise ContractError("readability tool failed: " + name)
-                data = load_json(attempt / (name + ".json"))
-                if not isinstance(data, dict) or (name == "compare" and not {"numbers", "urls", "unmatched"} <= data.keys()):
-                    raise ContractError("invalid readability tool output")
-                if name == "change-report":
+                if name == "compare":
+                    validate_readability_comparison(attempt, args[:2])
+                else:
+                    readability_candidates(attempt)
+                    data = load_json(attempt / "change-report.json")
                     saved = list((attempt / "reports").glob("*.json"))
-                    if data.get("kind") != "jre-change-report" or len(saved) != 1 or load_json(saved[0]) != data:
+                    if len(saved) != 1 or load_json(saved[0]) != data:
                         raise ContractError("saved readability report missing or different")
                 if (sha_file(script) != tool["sha256_bytes"] or sha_file(attempt / "before.md") != receipt["before_sha256_bytes"]
                         or sha_file(attempt / "after.md") != receipt["optimized_sha256_bytes"]):
@@ -1721,7 +1760,8 @@ def check_readability(run):
     """Inspect saved artifacts only; verification never executes the optional editor."""
     run = Path(run).resolve()
     report = {"schema_version": 1, "status": "NOT_RECORDED", "reason": "no_receipt",
-              "evidence": "local_runner_record_not_independently_observed", "semantic_review": "NOT_REVIEWED"}
+              "evidence": "local_runner_record_not_independently_observed", "semantic_review": "NOT_REVIEWED",
+              "comparison_candidates": None}
     path = run / "readability.json"
     try:
         if path.exists() or path.is_symlink():
@@ -1739,8 +1779,6 @@ def check_readability(run):
             report.update(status=record["status"], reason=record["reason"])
             if record["optimized_sha256_bytes"] is None:
                 report.update(status="EXECUTION_FAILED", reason=record["reason"])
-            elif sha_file(_read_run(run, "optimized.md")) != record["optimized_sha256_bytes"]:
-                report.update(status="STALE", reason="final_prompt_changed")
             elif record["status"] == "SKIPPED_REPORTED":
                 if (record["reason"] not in ("unavailable", "non_japanese") or record["files"] or record["tools"]
                         or record["attempt"] is not None or record["before_sha256_bytes"] is not None):
@@ -1769,11 +1807,21 @@ def check_readability(run):
                         if (not isinstance(tool, dict) or type(tool.get("returncode")) is not int or tool["returncode"] != 0
                                 or not isinstance(tool.get("sha256_bytes"), str) or not SHA_RE.fullmatch(tool["sha256_bytes"])):
                             raise ContractError("readability tool did not complete")
-                    report["status"] = "CONSISTENT_EXECUTION_RECORD"
+                    skill = record["tools"].get("SKILL.md")
+                    if not isinstance(skill, dict) or not isinstance(skill.get("sha256_bytes"), str) or not SHA_RE.fullmatch(skill["sha256_bytes"]):
+                        raise ContractError("readability skill hash missing")
+                    validate_readability_comparison(attempt, record["tools"]["compare_rewrite.py"]["command"][-3:-1])
+                    candidates = readability_candidates(attempt)
+                    saved = [name for name in record["files"] if Path(name).parent == Path("reports") and name.endswith(".json")]
+                    if len(saved) != 1 or load_json(attempt / saved[0]) != load_json(attempt / "change-report.json"):
+                        raise ContractError("saved readability report missing or different")
+                    report.update(status="CONSISTENT_EXECUTION_RECORD", comparison_candidates=candidates)
             elif record["status"] == "EXECUTION_RECORDED":
                 raise ContractError("readability attempt missing")
+            if record["status"] != "EXECUTION_FAILED" and sha_file(_read_run(run, "optimized.md")) != record["optimized_sha256_bytes"]:
+                report.update(status="STALE", reason="final_prompt_changed", comparison_candidates=None)
     except (OSError, ValueError, TypeError, KeyError, ContractError, Unreadable):
-        report.update(status="INVALID_RECORD", reason="receipt_or_artifact_invalid")
+        report.update(status="INVALID_RECORD", reason="receipt_or_artifact_invalid", comparison_candidates=None)
     write_json(run / "readability-verification.json", report)
     return report
 
