@@ -143,6 +143,10 @@ Antigravity では、ログを作ったときに `agy --version` を確認する
 
 人のレビュー(`review_method=human`)は `scorer_label=null`、counts は `agree=0, disagree=0, undetermined=ラベル数`、`min_agreement=null`。モデルのレビューは `scorer_label` を持ち、counts はラベルから再計算した値と一致させる。
 
+## 任意の日本語推敲の実行記録
+
+`readability` は導入済みの推敲スキルの照合・変化記録を子プロセスで実行し、`readability.json` と試行ごとの証拠を自動保存する。[手順・状態・限界](readability.md)を参照する。`verify` は共通の終了処理で `readability-verification.json` を自動保存する。検証時に外部スキルを実行しない。旧runでの未記録や推敲側の失敗は、取得・引用など既存の参照検証の判定とは分離する。生バイトのハッシュは証拠の整合性検査であり、独立した実行認証や品質採点ではない。
+
 ## 評価計画と結果 (compare)
 
 `eval-plan.json`、`eval-results.jsonl`、`evals/prompt-tailor-cases.jsonl` の構造は `scripts/evidence.py` の `PLAN_F` `ROW_F` `CASE_F` を参照。計画は実行前に固定し、結果の各行に `plan_sha256` を結ぶ。`development` 事例は採用判断に使わず、`held-out` 事例だけで採用基準を判定する。

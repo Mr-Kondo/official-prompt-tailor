@@ -2228,6 +2228,24 @@ class TestSkillFiles(unittest.TestCase):
         self.assertRegex((SKILL / "references" / "review-rubric.md").read_text(encoding="utf-8"), r"(?m)^rubric_version: \S+")
 
 
+class TestReadabilityIntegration(Base):
+    def test_verify_saves_missing_and_invalid_readability_separately(self):
+        run, log = self.good_run()
+        reference = self.verify(run, "live", log)
+        self.assertEqual(json.loads((run / "readability-verification.json").read_text())["status"], "NOT_RECORDED")
+        (run / "readability.json").write_text("{}", encoding="utf-8")
+        again = self.verify(run, "live", log)
+        self.assertEqual(again["verdict"], reference["verdict"])
+        self.assertEqual(json.loads((run / "readability-verification.json").read_text())["status"], "INVALID_RECORD")
+
+    def test_early_structure_failure_still_saves_readability_result(self):
+        run, log = self.good_run()
+        ev.record_readability(run, skip="unavailable")
+        (run / "recommendations.json").write_text("{}", encoding="utf-8")
+        self.assertEqual(self.verify(run, "live", log)["verdict"], "FAIL")
+        self.assertEqual(json.loads((run / "readability-verification.json").read_text())["status"], "SKIPPED_REPORTED")
+
+
 class TestInstall(unittest.TestCase):
     def setUp(self):
         import subprocess
