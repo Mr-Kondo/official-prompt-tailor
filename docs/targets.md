@@ -79,7 +79,7 @@
 | Codex | 5 | 4 | 5 | 資料なし |
 | Claude チャット | 7 | 1 | 6 | 資料なし |
 | Claude Cowork | 6 | 2 | 6 | 資料なし |
-| Claude Code | 8 | 4 | 8 | 1 |
+| Claude Code | 7 | 4 | 8 | 1 |
 | Gemini Apps | 資料なし | 資料なし | 2 | 資料なし |
 | Antigravity | 2 | 2 | 2 | 資料なし |
 | Gemini Apps の Tasks | 2 | 資料なし | 資料なし | 資料なし |
