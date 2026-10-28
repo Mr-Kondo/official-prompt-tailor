@@ -9,7 +9,7 @@
 ```text
 .claude/skills/official-prompt-tailor/
   SKILL.md                       入口・手順・表示規則
-  references/registry.json       資料(50)・対象(11)・審査済み規則(104)
+  references/registry.json       資料(50)・対象(11)・審査済み規則(103)
   references/evidence-contract.md / review-rubric.md
   scripts/evidence.py            fetch / verify / assess / compare / drift / rules / sources(標準ライブラリのみ)
   scripts/private_feedback.py    原文を収集しない評価票の template / export

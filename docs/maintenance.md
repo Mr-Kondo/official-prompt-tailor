@@ -129,7 +129,7 @@ python3 tools/maintain.py propose --url https://code.claude.com/docs/en/memory.m
 
 ### 人が審査する(`review`)
 
-規則 104 件の審査は、すべて agent が行い、人の審査は 0 件でした。`review` は、人が規則を 1 件ずつ審査して、記録するための道具です。
+規則 103 件の審査記録は、人による審査が 0 件です。agent の審査と、引用周辺が不変であることの機械比較を区別して記録しています。`review` は、人が規則を 1 件ずつ審査して、記録するための道具です。
 
 ```bash
 python3 tools/maintain.py review                          # 人がまだ審査していない規則を、順に出す
