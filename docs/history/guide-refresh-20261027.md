@@ -49,3 +49,10 @@ Claude Code Best practices、Claude Opus 5.5、Claude Code Scheduled tasksで、
 - [OpenAI Using GPT-6](https://developers.openai.com/api/docs/guides/latest-model)
 
 生の取得本文・比較JSONはGit除外対象の `feedback/` に保持し、公開しない。
+# 2026-10-29の再取得
+
+公開前の再取得で、Antigravity Rulesがwwwなしの公式URLへ移転していたため、登録URLを現行URLへ置き換えた。ドメイン制限や本文検査は緩めていない。
+
+引用2件のASCIIアポストロフィを現行本文の曲線アポストロフィへ更新した。追加で変更された47規則のうち、10規則は引用周辺不変の機械比較、37規則はagentが現行文脈と適用条件を再確認した。人による審査ではない。意味・適用条件の追加変更や新規資料の採用はしていない。
+
+移転先: https://antigravity.google/docs/rules/
