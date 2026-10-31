@@ -249,10 +249,16 @@ def intake(run):
     known = {page_key(u) for s in reg["sources"] for u in s["allowed_urls"]} | set(load_seen())
     path = Path(run) / "discovered-sources.json"
     found = ev.load_json(path)["sources"] if path.is_file() else []
-    rows = {}
+    hosts, rows = ev.official_hosts(reg), {}
     for e in found:
         url = e["final_url"] or e["requested_url"]
-        if e["status"] == "live" and page_key(url) not in known:
+        key = ev.url_key(url)
+        try:
+            body = ev.safe_join(Path(run), e["body_path"]).read_bytes()
+        except (OSError, ev.ContractError, TypeError):
+            continue  # a page whose saved body is gone is not a candidate
+        if (e["status"] == "live" and key is not None and key[0] in hosts and ev.sha_bytes(body) == e["body_sha256"]
+                and page_key(url) not in known):
             rows.setdefault(page_key(url), {"url": url, "extraction": e["extraction_version"], "body_sha256": e["body_sha256"],
                                             "fetched_at": e["fetched_at"]})
     rows = list(rows.values())

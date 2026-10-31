@@ -812,7 +812,9 @@ class TestPartialEvidence(Base):
         self.assertEqual(got["rechecked_at"], ev.iso(self.clock.t))
         self.assertTrue((self.run_dir("run-2") / "snapshots/doc-a/body.txt").is_file())
         self.generate(self.run_dir("run-2"))
-        self.assertNotEqual(self.verify(self.run_dir("run-2"), "live")["verdict"], "PASS_LIVE")
+        rep = self.verify(self.run_dir("run-2"), "live")
+        self.assertNotEqual(rep["verdict"], "PASS_LIVE")
+        self.assertIn("status_not_for_mode", codes(rep))  # the cache entry is the reason, not a missing host log
 
     def test_an_earlier_run_older_than_a_week_is_not_used(self):
         self.fetch("run-1")
@@ -865,6 +867,31 @@ class TestPartialEvidence(Base):
         self.assertEqual(rep["verdict"], "INCOMPLETE")
         self.assertIn("candidate_source_unreviewed", codes(rep))
         self.assertEqual(rep["change_counts"]["candidate"], 1)
+
+    def test_the_sources_report_calls_a_run_with_a_candidate_incomplete(self):
+        rep = ev.sources_report(self.candidate_run())
+        self.assertEqual(rep["verdict"], "INCOMPLETE")
+        self.assertIn("candidate_source_unreviewed", {p["code"] for p in rep["problems"]})
+
+    def test_a_candidate_whose_host_or_snapshot_was_changed_fails(self):
+        run = self.candidate_run()
+        p = run / "discovered-sources.json"
+        good = p.read_text(encoding="utf-8")
+        p.write_text(good.replace("https://docs.example.com/new.md", "https://evil.example.net/new.md"), encoding="utf-8")
+        rep = self.verify(run, "live")
+        self.assertEqual((rep["verdict"], "candidate_host_not_registered" in codes(rep)), ("FAIL", True))
+        p.write_text(good, encoding="utf-8")
+        with open(run / "snapshots/discovered-1/raw.bin", "ab") as f:
+            f.write(b" ")
+        rep = self.verify(run, "live")
+        self.assertEqual((rep["verdict"], "candidate_snapshot_mismatch" in codes(rep)), ("FAIL", True))
+
+    def test_extra_sources_need_live_mode(self):
+        self.fetch("run-1")
+        with self.assertRaises(ev.ContractError):
+            ev.do_fetch(self.make_input("run-c"), self.run_dir("run-c"), "cache", self.run_dir("run-1"), ["https://docs.example.com/new.md"])
+        self.assertFalse(self.run_dir("run-c").exists())
+        self.assertEqual(self.calls.count("https://docs.example.com/new.md"), 0)
 
     def test_a_candidate_change_with_a_quote_that_is_not_on_the_page_fails(self):
         rep = self.verify(self.candidate_run("a sentence the page does not hold"), "live")

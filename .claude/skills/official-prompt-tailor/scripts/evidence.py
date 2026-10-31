@@ -806,6 +806,8 @@ def do_fetch(input_path, out, mode, cache=None, extra=()):
     except (UnicodeDecodeError, ValueError) as e:
         raise ContractError(f"input: invalid JSON ({e})")
     validate_input(inp)
+    if extra and mode != "live":
+        raise ContractError("--extra-source needs --mode live")
     original = read_text(resolve_workspace_file(inp["original_path"]))
     out = Path(out)
     safe_id(out.name, "run id")
@@ -1169,7 +1171,7 @@ def verify(run, mode, host_log=None):
         if c["rule_id"] is not None:
             _check_change_evidence(R, c, bodies, entries, srcmap, rules, inp, acq)
         elif c["kind"] == "candidate":
-            _check_candidate(R, run, c)
+            _check_candidate(R, run, c, reg)
     _check_binding(R, rec, orig, opt)
 
     # read observation
@@ -1274,7 +1276,7 @@ def _check_change_evidence(R, c, bodies, entries, srcmap, rules, inp, acq):
         R.inc("rule_review", "rereview_pending", "source body changed since the rule was reviewed", **kw)
 
 
-def _check_candidate(R, run, c):
+def _check_candidate(R, run, c, reg):
     """A change that cites a page found by search. The quote is checked against the saved body; no rule reviewed the page,
     so the verdict can be INCOMPLETE at best."""
     kw = {"change_id": c["change_id"], "source_id": c["source_id"]}
@@ -1286,6 +1288,19 @@ def _check_candidate(R, run, c):
         raw = None
     if raw is None:
         R.fail("citation", "unknown_candidate_source", "no live discovered source with this id", **kw)
+        return
+    key = url_key(urllib.parse.urldefrag(e["final_url"] or e["requested_url"])[0])
+    if key is None or key[0] not in official_hosts(reg):
+        R.fail("citation", "candidate_host_not_registered", "the discovered page is not on a host the registry lists", **kw)
+        return
+    try:  # the same re-check a cache fetch makes: the raw bytes match their hash and give this body again
+        again = process_body({"extraction": e["extraction_version"], "body_locators": []},
+                             safe_join(run, e["raw_path"]).read_bytes(), e["content_type"])
+        same = sha_bytes(safe_join(run, e["raw_path"]).read_bytes()) == e["raw_sha256"] and again.encode("utf-8") == raw
+    except (Blocked, OSError, ContractError, KeyError):
+        same = False
+    if not same:
+        R.fail("citation", "candidate_snapshot_mismatch", "the saved page does not match its raw bytes or hash", **kw)
         return
     if sha_bytes(raw) != e["body_sha256"] or c["body_sha256"] != e["body_sha256"]:
         R.fail("citation", "body_hash_mismatch", "change cites a different body hash than the discovered page", **kw)
@@ -2106,6 +2121,10 @@ def sources_report(run, host_log=None):
         elif item["in_scope"] is False:
             problem("fail", "cited_rule_out_of_scope", f"rule {c['rule_id']} is unreviewed or does not apply to this target, purpose, surface and model", **ids)
     log_sha = _source_reads(run, inp["execution_host"], host_log, rows, rec, problem)
+    for c in (rec["changes"] if rec else []):
+        if c["kind"] == "candidate":
+            problem("incomplete", "candidate_source_unreviewed", "the cited page was found by search and no reviewed rule covers it",
+                    change_id=c["change_id"], source_id=c["source_id"])
     found = {x["source_id"]: x for x in load_json(run / "discovered-sources.json")["sources"]} if (run / "discovered-sources.json").is_file() else {}
     candidates = [{"change_id": c["change_id"], "source_id": c["source_id"], "lines": [c["source_start_line"], c["source_end_line"]],
                    "url": (found.get(c["source_id"]) or {}).get("final_url") or (found.get(c["source_id"]) or {}).get("requested_url")}

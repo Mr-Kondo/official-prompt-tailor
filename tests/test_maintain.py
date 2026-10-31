@@ -365,6 +365,16 @@ class TestIntake(MaintainBase):
         code, out, err = self.tool("intake", "--run", str(run))
         self.assertEqual((code, json.loads(out)["verdict"], json.loads(out)["issue"]), (0, "NONE", None))
 
+    def test_a_changed_discovered_file_is_not_trusted(self):
+        run = self.found_run("https://docs.example.com/new-extra")
+        p = run / "discovered-sources.json"
+        good = p.read_text(encoding="utf-8")
+        p.write_text(good.replace("docs.example.com/new-extra", "evil.example.net/new-extra"), encoding="utf-8")
+        self.assertEqual(json.loads(self.tool("intake", "--run", str(run))[1])["verdict"], "NONE")  # a host the registry does not list
+        p.write_text(good, encoding="utf-8")
+        (run / "snapshots/discovered-1/body.txt").write_text("changed\n", encoding="utf-8")
+        self.assertEqual(json.loads(self.tool("intake", "--run", str(run))[1])["verdict"], "NONE")  # a body that no longer matches its hash
+
     def test_a_run_without_discovered_sources_has_nothing_to_draft(self):
         ev.do_fetch(self.make_input("run-g"), self.tmp / "outputs" / "run-g", "live")
         code, out, err = self.tool("intake", "--run", str(self.tmp / "outputs" / "run-g"))

@@ -16,9 +16,9 @@
 
 live の取得に失敗した資料は、`fetch` が同じ親ディレクトリにある前の run(新しい順に 20 件まで)から、7 日以内の取得物を探して補う。補った資料は `cache` で、`fetched_at` は元の取得時刻、`rechecked_at` は今回の時刻。補えなければ `blocked` のまま。
 
-`--extra-source <URL>`(複数可)は、ホストが検索で見つけたページを取得する。取得できるのは、registry の資料と同じホストの `https` ページだけで、それ以外は `host_not_registered` などで `blocked` になり、通信しない。結果は `<run>/discovered-sources.json`(`{"schema_version": 1, "sources": [...]}`。各要素は `acquisition.json` の `sources` と同じ形で、`source_id` は `discovered-1`、`discovered-2`…)と `snapshots/discovered-N/` に残り、`acquisition.json` の `selected_sources` には入らない。抽出方式は `markdown-v1`、`html-main-v1`、`html-article-v1`、`html-body-v1` の順に試し、通ったものを `extraction_version` に書く。
+`--extra-source <URL>`(複数可、`--mode live` のときだけ)は、ホストが検索で見つけたページを取得する。取得できるのは、registry の資料と同じホストの `https` ページだけで、それ以外は `host_not_registered` などで `blocked` になり、通信しない。結果は `<run>/discovered-sources.json`(`{"schema_version": 1, "sources": [...]}`。各要素は `acquisition.json` の `sources` と同じ形で、`source_id` は `discovered-1`、`discovered-2`…)と `snapshots/discovered-N/` に残り、`acquisition.json` の `selected_sources` には入らない。抽出方式は `markdown-v1`、`html-main-v1`、`html-article-v1`、`html-body-v1` の順に試し、通ったものを `extraction_version` に書く。
 
-`recommendations.json` の `kind: candidate` は、`discovered-N` のページを引用する変更。`rule_id` は `null`、`source_id`・`body_sha256`・`source_start_line`・`source_end_line`・`exact_excerpt` は必須。`verify` は引用が保存した本文にあるかを確かめ、審査済みの規則がないので、必ず `INCOMPLETE`(`candidate_source_unreviewed`)にする。`change_counts` に `candidate` が加わる。
+`recommendations.json` の `kind: candidate` は、`discovered-N` のページを引用する変更。`rule_id` は `null`、`source_id`・`body_sha256`・`source_start_line`・`source_end_line`・`exact_excerpt` は必須。`verify` は、保存したページの生バイトとハッシュ、ホストが registry に載っていること、引用が保存した本文にあることを確かめ(違えば `FAIL`)、審査済みの規則がないので、必ず `INCOMPLETE`(`candidate_source_unreviewed`)にする。`change_counts` に `candidate` が加わる。
 
 `compare` は契約違反を検出した場合も終了コード 1(`contract_violations` が非空)。引数誤りは argparse の 2。
 

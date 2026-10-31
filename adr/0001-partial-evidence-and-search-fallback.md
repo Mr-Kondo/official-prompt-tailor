@@ -18,10 +18,10 @@
 
 ## 決定
 
-1. `fetch` の終了コードを分ける。0=全資料を取得、3=一部の資料だけ取得(最適化を続ける)、2=何も取得できない・対象未解決。`coverage` と `model_hint` は標準出力に出し、`acquisition.json` の形は変えない。
+1. `fetch` の終了コードを分ける。0=全資料を取得、3=一部の資料だけ取得(最適化を続ける)、2=選ばれた資料があるのに1件も取得できない・対象未解決(選ばれた資料が0件の入力は、従来どおり0)。`coverage` と `model_hint` は標準出力に出し、`acquisition.json` の形は変えない。
 2. Claude チャット・Claude Cowork・Claude Code では、`model_id` が登録と完全に一致すれば、`target_surface` が `unknown` でもモデル別ガイドを取得する。モデル別の規則33件の `surfaces` を `["all"]` にし、`claude-api-clear-direct` の前提から「surfaceがapiで」を外す。規則の意味と引用は変えない。
 3. live で取れなかった資料は、同じ親ディレクトリの前の run(新しい順に20件まで)から、7日以内の取得物を `cache` として自動で補う。補った run は `PASS_LIVE` にならない。
-4. 検索はホストが行う(製品名とモデル名だけ。原文・機密を検索語にしない)。見つけた URL は `fetch --extra-source` で渡す。取得できるのは registry と同じホストの https ページだけ。結果は run の `discovered-sources.json` に残し、`acquisition.json` の選択資料には入れない。
+4. 検索はホストが行う(製品名とモデル名だけ。原文・機密を検索語にしない)。見つけた URL は `fetch --extra-source` で渡す。取得できるのは registry と同じホストの https ページだけ。結果は run の `discovered-sources.json` に残し、`acquisition.json` の選択資料には入れない。`--mode live` のときだけ使える。`verify` と `intake` は、保存したページの生バイト・ハッシュ・登録ホストを再検査する。
 5. 検索で見つけたページを引用する変更は `kind: candidate`。引用の一致は `verify` が確かめるが、審査済みの規則がないので参照検証は必ず `INCOMPLETE`(`candidate_source_unreviewed`)。
 6. `registry.json` は run の中で書き換えない。`maintain.py intake --run` が候補を Issue の下書きにし、登録は `propose`、審査、`adopt` の順に人が進める。
 7. 別形式 URL(`.md` 版など)への切り替えは見送る。全50資料が URL を1つしか持たず、抽出方式も資料ごとに1つで、切り替え先がない。必要になったら、`allowed_urls` ごとに抽出方式を持たせる別の決定にする。
