@@ -40,33 +40,11 @@ git clone --branch main https://github.com/Mr-Kondo/official-prompt-tailor.git "
 
 この手順で取得済みなら、clone は繰り返さず、次へ進みます。clone に失敗した場合は、原因を確認してから進めてください。
 
-### 2. 使う製品のコマンドを実行する
+### 2. コマンドを実行する
 
-**使う製品と OS のブロックを1つ選び、そのままコピーして実行してください。** 現在の作業ディレクトリには依存しません。初回導入と更新で、同じコマンドを使えます。PowerShellでは `& {` から最後の `}` まで、ブロック全体をコピーします。
+**使う OS のブロックを1つ選び、そのままコピーして実行してください。** 以下は Claude Code 用です。Codex・Antigravity アプリ・IDE・Antigravity CLI は `--target` だけが違うので、[製品別のコピー用コマンド](docs/install.md#製品別のコピー用コマンド)を使います。現在の作業ディレクトリには依存しません。初回導入と更新で、同じコマンドを使えます。PowerShellでは `& {` から最後の `}` まで、ブロック全体をコピーします。
 
 最初の `git pull --ff-only` が `main` の最新版を取得し、成功した場合だけ `install.py --update` が配置先を更新します。これは公開タグへの固定ではなく、`main` に追従する手順です。`--update` だけでは最新版をダウンロードしません。
-
-#### Codex
-
-macOS・Linux:
-
-```sh
-git -C "$HOME/official-prompt-tailor" pull --ff-only &&
-python3 "$HOME/official-prompt-tailor/install.py" --target codex --user --update
-```
-
-Windows PowerShell:
-
-```powershell
-& {
-    git -C "$HOME/official-prompt-tailor" pull --ff-only
-    if (-not $? -or $LASTEXITCODE -ne 0) { throw "Git update failed; installation stopped." }
-    python -X utf8 "$HOME/official-prompt-tailor/install.py" --target codex --user --update
-    if (-not $? -or $LASTEXITCODE -ne 0) { throw "Skill update failed." }
-}
-```
-
-#### Claude Code
 
 macOS・Linux:
 
@@ -82,46 +60,6 @@ Windows PowerShell:
     git -C "$HOME/official-prompt-tailor" pull --ff-only
     if (-not $? -or $LASTEXITCODE -ne 0) { throw "Git update failed; installation stopped." }
     python -X utf8 "$HOME/official-prompt-tailor/install.py" --target claude-code --user --update
-    if (-not $? -or $LASTEXITCODE -ne 0) { throw "Skill update failed." }
-}
-```
-
-#### Antigravity アプリ・IDE
-
-macOS・Linux:
-
-```sh
-git -C "$HOME/official-prompt-tailor" pull --ff-only &&
-python3 "$HOME/official-prompt-tailor/install.py" --target antigravity --user --update
-```
-
-Windows PowerShell:
-
-```powershell
-& {
-    git -C "$HOME/official-prompt-tailor" pull --ff-only
-    if (-not $? -or $LASTEXITCODE -ne 0) { throw "Git update failed; installation stopped." }
-    python -X utf8 "$HOME/official-prompt-tailor/install.py" --target antigravity --user --update
-    if (-not $? -or $LASTEXITCODE -ne 0) { throw "Skill update failed." }
-}
-```
-
-#### Antigravity CLI
-
-macOS・Linux:
-
-```sh
-git -C "$HOME/official-prompt-tailor" pull --ff-only &&
-python3 "$HOME/official-prompt-tailor/install.py" --target antigravity-cli --user --update
-```
-
-Windows PowerShell:
-
-```powershell
-& {
-    git -C "$HOME/official-prompt-tailor" pull --ff-only
-    if (-not $? -or $LASTEXITCODE -ne 0) { throw "Git update failed; installation stopped." }
-    python -X utf8 "$HOME/official-prompt-tailor/install.py" --target antigravity-cli --user --update
     if (-not $? -or $LASTEXITCODE -ne 0) { throw "Skill update failed." }
 }
 ```
@@ -150,17 +88,7 @@ Windows PowerShell:
 
 ### 必要な接続先(HTTPS)
 
-- `code.claude.com`
-- `platform.claude.com`
-- `support.claude.com`
-- `learn.chatgpt.com`
-- `developers.openai.com`
-- `support.google.com`
-- `geminicli.com`
-- `adk.dev`
-- `www.antigravity.google`
-- `antigravity.google`
-- `ai.google.dev`
+`code.claude.com`、`platform.claude.com`、`support.claude.com`、`learn.chatgpt.com`、`developers.openai.com`、`support.google.com`、`geminicli.com`、`adk.dev`、`www.antigravity.google`、`antigravity.google`、`ai.google.dev`。
 
 許可されないと、`fetch` は `blocked` になります。許可設定は、スキルから変更しません。
 
@@ -174,23 +102,15 @@ Windows PowerShell:
 | 意味審査 | `assess` | `PASS` → 0、`FAIL` → 1、`INCOMPLETE`(未審査・校正不足・判断不足)→ 2 |
 | 効果測定 | `compare` | `IMPROVED_ON_TEST_SET` → 0、`REGRESSED` / `NO_CLEAR_IMPROVEMENT` → 1、`NOT_EVALUATED` / `INCOMPLETE` → 2。契約違反は 1 |
 
-`fetch` の終了コードは、0 が「必須資料の取得・本文検査に成功」、1 が「契約違反」、3 が「一部の資料だけ取得(取れた資料で最適化を続けられる。結果は候補で、検証済みではない)」、2 が「何も取得できない / target 未解決」です。**`fetch` の 0 は、検証済みではありません。** 引数の誤りは、argparse の 2 です。
-
-資料が一部取れなくても、取れた資料で最適化を続けられます(終了コード3)。標準出力の `coverage` が、取れた資料と取れなかった資料(理由つき)を示します。live で取れなかった資料は、7日以内の前の run の取得物で自動的に補い、それでも足りないときは、ホストが製品名とモデル名だけで検索し、公式ドメインのページを `fetch --extra-source` で渡します。検索で見つけたページは審査済みの規則がないので、変更は `candidate` として記録し、参照検証は `INCOMPLETE` のままです。`registry.json` は書き換えません。手順は[補い方](.claude/skills/official-prompt-tailor/references/fallback.md)、決定の理由は [adr/0001](adr/0001-partial-evidence-and-search-fallback.md) にあります。
-
-`drift` は、この 3 つとは別の、資料の更新確認です。規則の審査後に資料の本文が変わったかを、ハッシュと引用の有無で調べます。終了コードは、`CURRENT` → 0、`DRIFT` / `INCOMPLETE` → 2、契約違反 → 1 です。
-
-`sources` も別物で、どの資料を、なぜ(利用先・`purpose`・`target_surface`・`model_id` に応じてどう選んで)見たかを、スクリプトだけで出します。実行の前は `--target` などで計画を、実行の後は `--run` で、取得した本文のハッシュ・引用した規則とその審査者・(ログを渡せば)読んだ行を確かめます。終了コードは、`CONSISTENT` → 0、`INCONSISTENT` → 1、`INCOMPLETE` → 2 です(計画は 0)。使い方は [docs/usage.md](docs/usage.md) にあります。
-
 推奨を採用するには、「参照検証 PASS」と「意味審査 PASS」の両方が必要です。「改善を実測済み」と書けるのは、その対象の `IMPROVED_ON_TEST_SET` があるときだけです。これは、一般的な性能向上や統計的な確証を意味しません。
+
+`fetch` の終了コード、資料が一部しか取れないときの扱い、`drift`、`sources` は、[取得と確認の結果の読み方](docs/usage.md#取得と確認の結果の読み方)を参照してください。
 
 ## 使い方
 
 Claude Code で `/official-prompt-tailor` を呼ぶか、「このプロンプトを Claude Code 向けに公式資料に沿って最適化して」と頼みます。手動で流す手順、cache の例、`INCOMPLETE` の例は [docs/usage.md](docs/usage.md) にあります。利用先ごとの取得資料・使える規則と、`purpose` / `target_surface` / `model_id` の決め方は [docs/targets.md](docs/targets.md) にあります。
 
-### 会社の文書を持ち出せない場合
-
-`scripts/private_feedback.py` で、原文を入力せずに選択式の評価票を作れます。社内で元プロンプトと改稿を確認し、行・列の対応、例外、予定表現などの判定だけを記入して共有用JSONへ出力します。自動送信は行わず、共有できるかは社内規則に従います。xlsxの検査や匿名化、独立した意味審査の代わりにはなりません。[操作・出力・エラー](.claude/skills/official-prompt-tailor/references/private-feedback.md)を参照してください。開発時の根拠は[設計履歴](docs/history/private-feedback-design.md)に残しています。
+原文を持ち出せない会社の文書では、`scripts/private_feedback.py` で選択式の評価票を作れます。手順は[会社の文書を持ち出せない場合](docs/usage.md#会社の文書を持ち出せない場合)を参照してください。
 
 ## 何を保証するか
 
@@ -206,7 +126,7 @@ Claude Code で `/official-prompt-tailor` を呼ぶか、「このプロンプ�
 python3 -m unittest discover -s tests
 ```
 
-単体テストの通信はmock、ログfixtureは合成データです。実プロセスでの限定検証の記録は、[検証履歴](docs/history/runtime-verification.md)と日付付きの証拠要約に分けています。テストが通ることが示すのは、「検査コードが想定どおり動く」ことだけです。本番の公式取得・独立ログ・認知的な読了・実際の skill 発火・対象製品での効果を確認したことには、なりません。
+テストが示すのは、検査コードが想定どおり動くことだけです。本番の公式取得・独立ログ・skill の実発火・対象製品での効果は、示しません。[何を示すか](docs/trust-boundary.md#テストが示すこと)と[検証履歴](docs/history/runtime-verification.md)を参照してください。
 
 ## 出典・ライセンス
 

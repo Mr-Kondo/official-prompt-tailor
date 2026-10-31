@@ -1,6 +1,72 @@
 # インストール・更新・削除の詳細
 
-初めてユーザー配置で導入する場合は、[READMEのコピー用コマンド](../README.md#インストール)を使ってください。ここでは、既存の配置先を使う更新、各オプション、失敗時の確認方法を説明します。
+初めてユーザー配置で導入する場合は、[READMEのコピー用コマンド](../README.md#インストール)(Claude Code 用)か、下の「製品別のコピー用コマンド」を使ってください。ここでは、既存の配置先を使う更新、各オプション、失敗時の確認方法を説明します。
+
+## 製品別のコピー用コマンド
+
+ユーザー配置の初回導入と更新に使う、Codex・Antigravity アプリ・IDE・Antigravity CLI 用のコマンドです。Claude Code 用は [README](../README.md#インストール) にあります。`--target` 以外は同じです。初回の clone と Windows の前提（PowerShell 5.1／7、`py -3` の読替え）は、README の「インストール」と同じです。
+
+**使う製品と OS のブロックを1つ選び、そのままコピーして実行してください。** PowerShellでは `& {` から最後の `}` まで、ブロック全体をコピーします。
+
+### Codex
+
+macOS・Linux:
+
+```sh
+git -C "$HOME/official-prompt-tailor" pull --ff-only &&
+python3 "$HOME/official-prompt-tailor/install.py" --target codex --user --update
+```
+
+Windows PowerShell:
+
+```powershell
+& {
+    git -C "$HOME/official-prompt-tailor" pull --ff-only
+    if (-not $? -or $LASTEXITCODE -ne 0) { throw "Git update failed; installation stopped." }
+    python -X utf8 "$HOME/official-prompt-tailor/install.py" --target codex --user --update
+    if (-not $? -or $LASTEXITCODE -ne 0) { throw "Skill update failed." }
+}
+```
+
+### Antigravity アプリ・IDE
+
+macOS・Linux:
+
+```sh
+git -C "$HOME/official-prompt-tailor" pull --ff-only &&
+python3 "$HOME/official-prompt-tailor/install.py" --target antigravity --user --update
+```
+
+Windows PowerShell:
+
+```powershell
+& {
+    git -C "$HOME/official-prompt-tailor" pull --ff-only
+    if (-not $? -or $LASTEXITCODE -ne 0) { throw "Git update failed; installation stopped." }
+    python -X utf8 "$HOME/official-prompt-tailor/install.py" --target antigravity --user --update
+    if (-not $? -or $LASTEXITCODE -ne 0) { throw "Skill update failed." }
+}
+```
+
+### Antigravity CLI
+
+macOS・Linux:
+
+```sh
+git -C "$HOME/official-prompt-tailor" pull --ff-only &&
+python3 "$HOME/official-prompt-tailor/install.py" --target antigravity-cli --user --update
+```
+
+Windows PowerShell:
+
+```powershell
+& {
+    git -C "$HOME/official-prompt-tailor" pull --ff-only
+    if (-not $? -or $LASTEXITCODE -ne 0) { throw "Git update failed; installation stopped." }
+    python -X utf8 "$HOME/official-prompt-tailor/install.py" --target antigravity-cli --user --update
+    if (-not $? -or $LASTEXITCODE -ne 0) { throw "Skill update failed." }
+}
+```
 
 ## ソースの取得とスキルの配置は別の操作
 

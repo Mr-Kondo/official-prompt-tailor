@@ -37,3 +37,7 @@
 - 新しい依存パッケージ、グローバル設定、hook、自動適用はありません。
 - 保守用の `tools/maintain.py` は、registry か `tools/discovery.json` にあるホストの、https のページだけを取得します。registry を書き換えるのは、`adopt --write`、`rereview --write`、`review` だけです。`adopt` は、審査者が書いた spec の引用が、取得した本文にあることを確かめて、審査者の `reviewer_id` を記録します(`human:` で始まるものは拒否します)。`rereview` は、引用とその前後が旧本文と同じ規則の審査を、機械の審査(`not human`)として更新します。`review` は、対話端末で人が入力した名前を `human:<名前>` として記録し、`tools/human-reviews.json` にも残します。どれも、規則の解釈が正しいことは確かめません。`discover` が挙げる候補と、`propose` が作る登録案は、公式であることも、規則の審査も保証しません。`docs --write` が書き換えるのは、README と `docs/` の、registry から求めた件数と表だけです。
 - 週次の GitHub Actions(`watch.yml`)が書くのは、このリポジトリの Issue だけです。`drift` / `discover` の結果を、ラベル付きの 1 件の Issue に置きます。
+
+## テストが示すこと
+
+単体テストの通信はmock、ログfixtureは合成データです。実プロセスでの限定検証の記録は、[検証履歴](history/runtime-verification.md)と日付付きの証拠要約に分けています。テストが通ることが示すのは、「検査コードが想定どおり動く」ことだけです。本番の公式取得・独立ログ・認知的な読了・実際の skill 発火・対象製品での効果を確認したことには、なりません。
