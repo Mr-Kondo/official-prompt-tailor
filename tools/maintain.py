@@ -242,6 +242,29 @@ def discover(mark_seen=False):
             "marked_seen": len(listed) if mark_seen else 0}
 
 
+def intake(run):
+    """The pages a run found by search (evidence.py fetch --extra-source), drafted as one Issue for a person to review.
+    Nothing is registered or marked as triaged here; a page already in the registry or already triaged is left out."""
+    reg, _ = ev.load_registry()
+    known = {page_key(u) for s in reg["sources"] for u in s["allowed_urls"]} | set(load_seen())
+    path = Path(run) / "discovered-sources.json"
+    found = ev.load_json(path)["sources"] if path.is_file() else []
+    rows = {}
+    for e in found:
+        url = e["final_url"] or e["requested_url"]
+        if e["status"] == "live" and page_key(url) not in known:
+            rows.setdefault(page_key(url), {"url": url, "extraction": e["extraction_version"], "body_sha256": e["body_sha256"],
+                                            "fetched_at": e["fetched_at"]})
+    rows = list(rows.values())
+    issue = None
+    if rows:
+        lines = [f"- {r['url']}(抽出 `{r['extraction']}`、本文 SHA-256 `{r['body_sha256']}`、取得 {r['fetched_at']})" for r in rows]
+        issue = {"title": "公式資料に、検索で見つけた新規ページの候補があります",
+                 "body": "実行 " + Path(run).name + " で、検索により見つけた公式ドメインのページです。まだ登録されておらず、審査もされていません。\n\n"
+                         + "\n".join(lines) + "\n\n登録するときは `python3 tools/maintain.py propose --url <URL> --target <id>` で提案を作り、規則を審査します。"}
+    return {"schema_version": 1, "run": Path(run).name, "verdict": "CANDIDATES" if rows else "NONE", "candidates": rows, "issue": issue}
+
+
 def check_request(reg, url, targets, source_id):
     """Raise ContractError unless this URL may be fetched and proposed. Returns the source_id to use."""
     registered = {page_key(u) for s in reg["sources"] for u in s["allowed_urls"]}
@@ -1127,6 +1150,8 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="cmd", required=True)
     d = sub.add_parser("discover")
     d.add_argument("--mark-seen", action="store_true")
+    it = sub.add_parser("intake")
+    it.add_argument("--run", required=True)
     p = sub.add_parser("propose")
     p.add_argument("--url", required=True)
     p.add_argument("--target", action="append", default=[])
@@ -1168,6 +1193,9 @@ def main(argv=None):
             rep = discover(args.mark_seen)
             found = sum(len(row["candidates"]) for row in rep["indexes"])
             return ev._emit("discover", 0 if rep["verdict"] == "NONE" else 2, rep, f"{rep['verdict']} {found} candidates")
+        if args.cmd == "intake":
+            rep = intake(args.run)
+            return ev._emit("intake", 0 if rep["verdict"] == "NONE" else 2, rep, f"{rep['verdict']} {len(rep['candidates'])} candidates")
         if args.cmd == "adopt":
             rep = adopt(args.spec, args.write)
             n = sum(len(s["rules"]) for s in rep["sources"])

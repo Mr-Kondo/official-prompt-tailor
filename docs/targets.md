@@ -20,7 +20,7 @@
 | | `unknown` | 不明な場合(既定) |
 | `model_id` | モデルの ID | 不明な場合は `unknown` |
 
-- `unknown` は、`surfaces` と `models` が `all` の資料・規則にだけ一致します。`api` 向けの資料と、モデルを限定した資料・規則は、使われません。
+- `unknown` は、`surfaces` が `all` の資料・規則にだけ一致します。`api` 向けの資料は使われません。モデルを限定した資料・規則は、`model_id` が一致すれば `target_surface` が `unknown` でも使われます(Claude チャット・Claude Cowork・Claude Code のモデル別ガイド)。
 - 依頼されていない種類への変換(通常の依頼を Gems・Rule・Skill の作成に変えるなど)は、しません。
 
 ## 利用先と、取得される資料
@@ -29,7 +29,7 @@
 
 - 「常に取得」の資料は、`purpose` と `target_surface` に関係なく取得されます。規則が一部の `purpose` にしかない資料は、ここに入りません。
 - 「条件付き」の資料は、`purpose` と `target_surface` の両方が合うときだけ、追加で取得されます。条件は、その資料の規則が使われる `purpose` と `target_surface` です。規則のない入力で読ませないためで、`registry_problems` が確かめます([maintenance.md](maintenance.md))。
-- 特定のモデルに限った資料(モデル別ガイド)は、`target_surface` が `api` で、`model_id` がそのモデルのときだけ取得されます。次の表には出ません。「`api` と `model_id` を指定すると」にあります。
+- 特定のモデルに限った資料(モデル別ガイド)は、`model_id` がそのモデルのときだけ取得されます。`target_surface` は問いません。次の表には出ません。「`api` と `model_id` を指定すると」にあります。
 
 表の「条件付き」は、`target_surface` と `model_id` が `unknown` のときの追加分と、`target_surface` を `api` にしたときの追加分です。
 
@@ -101,7 +101,7 @@
 | Antigravity | `antigravity-sdk-templated-instructions` | `agent-instruction` |
 | Claude チャット・Claude Cowork・Claude Code | モデルを限定した規則(下記) | 規則による |
 
-モデルを限定した規則は 33 件です。`target_surface` が `api` で、`model_id` が規則の `models` に含まれるときだけ使えます。他のモデルと `unknown` では、使われません。モデルを限定した資料(モデル別ガイド)も、同じ条件でだけ取得されます。
+モデルを限定した規則は 33 件です。`model_id` が規則の `models` に含まれるときだけ使えます。`target_surface` は問いません。他のモデルと `unknown` では、使われません。モデルを限定した資料(モデル別ガイド)も、同じ条件でだけ取得されます。33 件はすべて、指示の書き方の規則で、前提で原文の内容を確かめます。
 
 <!-- generated:model-guides begin (python3 tools/maintain.py docs --write) -->
 | `model_id` | 取得される、モデル限定の資料 | 使える規則 |
@@ -118,7 +118,7 @@
 
 - 件数は、`purpose` を問わない合計です。`purpose` によって、使える規則は変わります。
 - `claude-model-prompting` の規則は `claude-api-clear-direct` の 1 件だけで、上の 4 つのモデルにだけ付いています。そのため、この資料も、この 4 つのモデルのときだけ取得されます。
-- Claude のモデル別ガイドの規則は、`api` の指示の書き方(範囲の明示、完了条件、冗長さ、進捗の報告など)に限ります。API のパラメーター(`effort` や `max_tokens` など)の設定は、プロンプトの書き換えではないので、規則にしていません。
+- Claude のモデル別ガイドの規則は、プロンプトの指示の書き方(範囲の明示、完了条件、冗長さ、進捗の報告など)に限ります。API のパラメーター(`effort` や `max_tokens` など)の設定は、プロンプトの書き換えではないので、規則にしていません。
 
 ## 利用先ごとの注意
 

@@ -339,6 +339,38 @@ class TestPropose(MaintainBase):
         self.assertEqual(self.calls, [])  # nothing was fetched for a refused request
 
 
+class TestIntake(MaintainBase):
+    """A page the host found by search is drafted as an Issue for a person to review; nothing is registered."""
+    def found_run(self, *urls, down=()):
+        for u in urls:
+            self.responses[u] = (200, HTML, self.page)
+        for u in down:
+            self.responses.pop(u, None)
+        ev.do_fetch(self.make_input("run-f"), self.tmp / "outputs" / "run-f", "live", None, list(urls))
+        return self.tmp / "outputs" / "run-f"
+
+    def test_a_new_live_page_becomes_an_issue_draft_and_exit_2(self):
+        run = self.found_run("https://docs.example.com/new-extra")
+        code, out, err = self.tool("intake", "--run", str(run))
+        rep = json.loads(out)
+        self.assertEqual((code, rep["verdict"]), (2, "CANDIDATES"))
+        self.assertEqual([c["url"] for c in rep["candidates"]], ["https://docs.example.com/new-extra"])
+        self.assertIn("https://docs.example.com/new-extra", rep["issue"]["body"])
+        self.assertIn(rep["candidates"][0]["body_sha256"], rep["issue"]["body"])
+        self.assertIn("maintain.py propose", rep["issue"]["body"])
+        self.assertFalse(self.seen.exists())  # drafting does not mark anything as triaged
+
+    def test_a_registered_page_and_a_blocked_page_are_not_candidates(self):
+        run = self.found_run(A_URL, "https://docs.example.com/other-extra", down=("https://docs.example.com/other-extra",))  # A_URL is registered
+        code, out, err = self.tool("intake", "--run", str(run))
+        self.assertEqual((code, json.loads(out)["verdict"], json.loads(out)["issue"]), (0, "NONE", None))
+
+    def test_a_run_without_discovered_sources_has_nothing_to_draft(self):
+        ev.do_fetch(self.make_input("run-g"), self.tmp / "outputs" / "run-g", "live")
+        code, out, err = self.tool("intake", "--run", str(self.tmp / "outputs" / "run-g"))
+        self.assertEqual((code, json.loads(out)["verdict"]), (0, "NONE"))
+
+
 class TestRegistryRules(unittest.TestCase):
     """What the repository requires of registry.json, and the one writer that keeps its layout."""
     PATH = SKILL / "references" / "registry.json"

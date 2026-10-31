@@ -249,7 +249,7 @@ class TestPositive(Base):
         rep = self.verify(run, "live", log)
         self.assertEqual(rep["verdict"], "PASS_LIVE", rep["errors"])
         self.assertEqual(rep["sources"][0]["read_status"], "observed")
-        self.assertEqual(rep["change_counts"], {"official": 1, "inference": 0, "editorial": 2})
+        self.assertEqual(rep["change_counts"], {"official": 1, "inference": 0, "editorial": 2, "candidate": 0})
         code, out, err = self.cli("verify", "--run", str(run), "--mode", "live", "--host-log", str(log))
         self.assertEqual(code, 0)
         self.assertIn("PASS_LIVE", err)
@@ -709,7 +709,7 @@ class TestTimeAndReads(Base):
 
     def test_cache_without_the_needed_source_is_missing(self):
         code, acq = self.fetch("run-3", "cache", self.run, purpose="skill-instructions")  # cached run only holds doc-a
-        self.assertEqual(code, 2)
+        self.assertEqual(code, 3)  # doc-a was read, so the run goes on with it
         self.assertEqual({e["source_id"]: e["status"] for e in acq["sources"]}, {"doc-a": "cache", "doc-md": "missing"})
 
     def test_malformed_host_log_is_a_failure_not_a_crash(self):
@@ -766,6 +766,132 @@ class TestTimeAndReads(Base):
 
 
 # =========================================================== routing and retention
+class TestPartialEvidence(Base):
+    """A source that cannot be read must not stop the run: it goes on with what it read, and says so."""
+    def fetch_extra(self, run_id, extra, **over):
+        return ev.do_fetch(self.make_input(run_id, **over), self.run_dir(run_id), "live", None, extra)
+
+    def test_a_run_that_read_some_sources_exits_3_and_coverage_names_the_rest(self):
+        del self.responses[MD_URL]
+        code, acq = self.fetch("run-p", purpose="skill-instructions")
+        self.assertEqual(code, 3)
+        cov = ev.coverage(acq)
+        self.assertEqual((cov["live"], cov["cache"], [m["source_id"] for m in cov["missing"]]), (["doc-a"], [], ["doc-md"]))
+        self.assertTrue(cov["missing"][0]["error"].startswith("network_error"))
+        self.assertEqual(cov["network_denied_hosts"], ["docs.example.com"])
+
+    def test_a_run_that_read_nothing_exits_2(self):
+        self.responses.clear()
+        self.assertEqual(self.fetch("run-n", purpose="skill-instructions")[0], 2)
+
+    def test_the_cli_prints_the_coverage_and_the_model_hint_with_exit_3(self):
+        del self.responses[MD_URL]
+        inp = self.make_input("run-c", purpose="skill-instructions")
+        code, out, err = self.cli("fetch", "--input", str(inp), "--out", str(self.run_dir("run-c")), "--mode", "live")
+        shown = json.loads(out)
+        self.assertEqual((code, shown["coverage"]["live"], shown["model_hint"], shown["discovered"]), (3, ["doc-a"], [], []))
+        self.assertIn("partial", err)
+
+    def test_a_partial_run_is_never_pass_live(self):
+        del self.responses[MD_URL]
+        self.fetch("run-p", purpose="skill-instructions")
+        run = self.run_dir("run-p")
+        self.generate(run)
+        rep = self.verify(run, "live")
+        self.assertNotEqual(rep["verdict"], "PASS_LIVE")
+        self.assertIn("source_blocked", codes(rep))
+
+    def test_a_failed_live_fetch_uses_a_fresh_earlier_run_as_cache(self):
+        self.fetch("run-1")
+        first = self.entry(self.run_dir("run-1"))
+        self.clock.advance(hours=2)
+        del self.responses[A_URL]
+        code, acq = self.fetch("run-2")
+        got = self.entry(self.run_dir("run-2"))
+        self.assertEqual((code, got["status"], got["fetched_at"]), (3, "cache", first["fetched_at"]))
+        self.assertEqual(got["rechecked_at"], ev.iso(self.clock.t))
+        self.assertTrue((self.run_dir("run-2") / "snapshots/doc-a/body.txt").is_file())
+        self.generate(self.run_dir("run-2"))
+        self.assertNotEqual(self.verify(self.run_dir("run-2"), "live")["verdict"], "PASS_LIVE")
+
+    def test_an_earlier_run_older_than_a_week_is_not_used(self):
+        self.fetch("run-1")
+        self.clock.advance(days=8)
+        del self.responses[A_URL]
+        code, acq = self.fetch("run-2")
+        self.assertEqual((code, self.entry(self.run_dir("run-2"))["status"]), (2, "blocked"))
+        self.assertEqual([d.name for d in (self.run_dir("run-2") / "snapshots").glob("*")], [])
+
+    def test_an_extra_source_is_kept_apart_from_the_registered_sources(self):
+        new_md, new_html = "https://docs.example.com/new.md", "https://docs.example.com/other"
+        self.responses[new_md] = (200, {"content-type": "text/markdown"}, self.md)
+        self.responses[new_html] = (200, HTML, self.page)
+        code, acq = self.fetch_extra("run-x", [new_md, new_html])
+        self.assertEqual((code, acq["selected_sources"]), (0, ["doc-a"]))
+        found = json.loads((self.run_dir("run-x") / "discovered-sources.json").read_text(encoding="utf-8"))["sources"]
+        self.assertEqual([(e["source_id"], e["status"], e["extraction_version"]) for e in found],
+                         [("discovered-1", "live", "markdown-v1"), ("discovered-2", "live", "html-main-v1")])
+        self.assertTrue((self.run_dir("run-x") / "snapshots/discovered-1/body.txt").is_file())
+        self.assertEqual([e["source_id"] for e in json.loads((self.run_dir("run-x") / "acquisition.json").read_text(encoding="utf-8"))["sources"]],
+                         ["doc-a"])  # the discovered pages are not in the run's acquisition
+
+    def test_an_extra_source_on_an_unregistered_host_is_not_requested(self):
+        evil = "https://evil.example.net/x"
+        self.responses[evil] = (200, HTML, self.page)
+        self.fetch_extra("run-e", [evil, "http://docs.example.com/plain"])
+        found = json.loads((self.run_dir("run-e") / "discovered-sources.json").read_text(encoding="utf-8"))["sources"]
+        self.assertEqual([(e["status"], e["error"]) for e in found],
+                         [("blocked", "host_not_registered"), ("blocked", "url_not_https_or_has_userinfo_or_port")])
+        self.assertNotIn(evil, self.calls)
+
+    def candidate_run(self, excerpt=None):
+        new_md = "https://docs.example.com/new.md"
+        self.responses[new_md] = (200, {"content-type": "text/markdown"}, self.md)
+        self.fetch_extra("run-k", [new_md])
+        run = self.run_dir("run-k")
+        self.generate(run)
+        found = json.loads((run / "discovered-sources.json").read_text(encoding="utf-8"))["sources"][0]
+        first = (run / found["body_path"]).read_text(encoding="utf-8").split("\n")[0]
+
+        def to_candidate(rec):
+            c = rec["changes"][0]
+            c.update(kind="candidate", rule_id=None, source_id="discovered-1", body_sha256=found["body_sha256"],
+                     source_start_line=1, source_end_line=1, exact_excerpt=excerpt or first)
+        self.rewrite_rec(run, to_candidate)
+        return run
+
+    def test_a_candidate_change_checks_its_quote_and_leaves_the_run_incomplete(self):
+        rep = self.verify(self.candidate_run(), "live")
+        self.assertEqual(rep["verdict"], "INCOMPLETE")
+        self.assertIn("candidate_source_unreviewed", codes(rep))
+        self.assertEqual(rep["change_counts"]["candidate"], 1)
+
+    def test_a_candidate_change_with_a_quote_that_is_not_on_the_page_fails(self):
+        rep = self.verify(self.candidate_run("a sentence the page does not hold"), "live")
+        self.assertEqual(rep["verdict"], "FAIL")
+        self.assertIn("excerpt_not_in_lines", codes(rep))
+
+    def test_the_sources_report_names_what_could_not_be_read_and_what_is_only_a_candidate(self):
+        del self.responses[MD_URL]
+        self.fetch("run-p", purpose="skill-instructions")
+        self.generate(self.run_dir("run-p"))
+        text = ev.render_sources(ev.sources_report(self.run_dir("run-p")))
+        self.assertIn(f"format {ev.SOURCES_FORMAT}", text)
+        self.assertRegex(text, r"取得できなかった資料: `doc-md`\(network_error")
+        run = self.candidate_run()
+        rep = ev.sources_report(run)
+        self.assertEqual([(c["source_id"], c["lines"]) for c in rep["candidates"]], [("discovered-1", [1, 1])])
+        self.assertIn("## 公式候補(未審査)", ev.render_sources(rep))
+
+    def test_a_candidate_change_may_not_name_a_rule_and_must_cite_its_page(self):
+        run = self.candidate_run()
+        for edit in ({"rule_id": "rule-verify"}, {"rule_id": None, "exact_excerpt": None}):
+            with self.subTest(edit):
+                self.rewrite_rec(run, lambda rec: rec["changes"][0].update(edit))
+                rep = self.verify(run, "live")
+                self.assertEqual((rep["verdict"], codes(rep)), ("FAIL", {"invalid_structure", "skipped"}))
+
+
 class TestRouting(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -827,7 +953,9 @@ class TestRouting(unittest.TestCase):
                 got = self.route("claude", "one-shot", "api", model)
                 self.assertEqual(("claude-prompting-opus-5-5" in got, "claude-prompting-sonnet-5-5" in got, "claude-model-prompting" in got),
                                  (has_opus, has_sonnet, has_general))
-        self.assertNotIn("claude-prompting-opus-5-5", self.route("claude", "one-shot", "unknown", "claude-opus-5-5"))  # surface still decides
+        # the Claude guides give advice on wording a prompt, so the model decides and the API surface does not
+        self.assertIn("claude-prompting-opus-5-5", self.route("claude", "one-shot", "unknown", "claude-opus-5-5"))
+        self.assertIn("claude-prompting-sonnet-5-5", self.route("claude-code", "one-shot", "unknown", "claude-sonnet-5-5"))
 
     def all_inputs(self):
         models = ["unknown", "other-model"] + sorted({m for s in self.reg["sources"] for m in s["models"] if m != "all"})
@@ -1944,9 +2072,9 @@ class TestSourcesPlan(unittest.TestCase):
     def test_without_a_model_or_the_api_surface_no_guide_is_chosen_and_the_reason_says_which(self):
         no_model = self.plan(model="unknown")
         self.assertEqual({g["reason"] for g in no_model["model"]["guides"]}, {"model_unknown"})
-        no_surface = self.plan(surface="unknown")
-        self.assertEqual({(g["reason"], g["surface_ok"], g["purpose_ok"]) for g in no_surface["model"]["guides"]},
-                         {("route_not_matched", False, True)})  # the surface, not the model, keeps them out
+        no_surface = self.plan(surface="unknown")  # the surface does not keep the model's guide out
+        self.assertEqual({g["source_id"] for g in no_surface["model"]["guides"] if g["status"] == "selected"},
+                         {"claude-prompting-opus-5-5", "claude-model-prompting"})
         self.assertEqual(self.plan(target="unresolved")["selected"], [])
 
     def test_a_target_without_model_guides_does_not_depend_on_the_model(self):
@@ -1966,7 +2094,13 @@ class TestSourcesPlan(unittest.TestCase):
         self.assertEqual({m: set(added) for m, added in rep["models"]["added"].items()}, expected)
         self.assertFalse(set(limited) & set(rep["models"]["base"]))
         by_ui = self.plan(surface="unknown", all_models=True)["models"]["added"]
-        self.assertEqual({m: a for m, a in by_ui.items() if a}, {})  # off the API surface, no model changes the sources
+        self.assertEqual({m: set(a) for m, a in by_ui.items()}, expected)  # the same without the API surface
+
+    def test_a_spelling_variant_of_a_model_name_gets_the_registered_id_as_a_hint(self):
+        for name in ("Sonnet5.5", "sonnet 5.5", "Claude Sonnet 5.5", "claude-sonnet-5-5-20261001"):
+            with self.subTest(name):
+                self.assertEqual(ev.model_hint(self.reg, name), ["claude-sonnet-5-5"])
+        self.assertEqual(ev.model_hint(self.reg, "claude-sonnet-5-5"), [])
 
     def test_markdown_names_the_guide_the_reason_and_the_model(self):
         text = ev.render_sources(self.plan(model="claude-opus-5-5-20261001", all_models=True))

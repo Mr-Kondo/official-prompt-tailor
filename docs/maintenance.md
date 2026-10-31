@@ -127,6 +127,14 @@ python3 tools/maintain.py propose --url https://code.claude.com/docs/en/memory.m
 
 出力の `source` を、`sources` に貼ります。`targets` への配線、`rules` の追加、審査は、次の「新しい資料を足す」の手順 3 以降です。
 
+### 検索で見つけたページを取り込む(`intake`)
+
+実行(run)の中でホストが検索して見つけた公式ドメインのページ(`evidence.py fetch --extra-source`)は、その run の `discovered-sources.json` に残ります。`python3 tools/maintain.py intake --run <runのディレクトリ>` が、そのうち登録済みでも既読(`tools/discovery-seen.json`)でもないページを、Issue の下書き(`issue.title`・`issue.body`)にします。何も登録せず、既読にもしません。
+
+- `verdict` は `CANDIDATES` か `NONE` です。終了コードは、`NONE` が 0、`CANDIDATES` が 2 です。
+- 下書きは `gh issue create --body-file` で Issue にします。登録するときは `propose`、審査、`adopt` の順に進めます。
+- スキルは `registry.json` を書き換えません。検索で見つけたページを、審査なしで規則の根拠にしないためです。
+
 ### 人が審査する(`review`)
 
 規則 103 件の審査記録は、人による審査が 0 件です。agent の審査と、引用周辺が不変であることの機械比較を区別して記録しています。`review` は、人が規則を 1 件ずつ審査して、記録するための道具です。

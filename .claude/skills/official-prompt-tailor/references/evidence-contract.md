@@ -10,7 +10,15 @@
 | 意味審査 | `assess` | `PASS` / `FAIL` / `INCOMPLETE` | 0 / 1 / 2 |
 | 効果測定 | `compare` | `IMPROVED_ON_TEST_SET` / `REGRESSED` / `NO_CLEAR_IMPROVEMENT` / `NOT_EVALUATED` / `INCOMPLETE` | 0 / 1 / 1 / 2 / 2 |
 
-`fetch`: 0=当該 mode の必須資料の取得・本文検査が成功、1=契約違反、2=blocked / missing / stale / target 未解決。`fetch` の 0 は生成前の取得成功だけを示す。
+`fetch`: 0=選ばれた全資料を当該 mode で取得し、本文検査にも成功、1=契約違反、3=一部の資料だけ取得(`live`、または前の run から補った `cache`)、2=何も取得できない・target 未解決。3 では最適化を続けてよいが、結果は候補で、`verify` は `INCOMPLETE`(`source_blocked`、補った `cache` は `status_not_for_mode`)になり、`PASS_LIVE` にならない。`fetch` の 0 は生成前の取得成功だけを示す。
+
+`fetch` の標準出力は、`acquisition.json` と同じ内容に `coverage`(`selected`・`live`・`cache`・`missing`・`network_denied_hosts`)、`model_hint`(登録済みの ID と綴りだけが違うときの候補)、`discovered`(下記)を足したもので、この 3 つは標準出力だけにあり `acquisition.json` には書かれない。
+
+live の取得に失敗した資料は、`fetch` が同じ親ディレクトリにある前の run(新しい順に 20 件まで)から、7 日以内の取得物を探して補う。補った資料は `cache` で、`fetched_at` は元の取得時刻、`rechecked_at` は今回の時刻。補えなければ `blocked` のまま。
+
+`--extra-source <URL>`(複数可)は、ホストが検索で見つけたページを取得する。取得できるのは、registry の資料と同じホストの `https` ページだけで、それ以外は `host_not_registered` などで `blocked` になり、通信しない。結果は `<run>/discovered-sources.json`(`{"schema_version": 1, "sources": [...]}`。各要素は `acquisition.json` の `sources` と同じ形で、`source_id` は `discovered-1`、`discovered-2`…)と `snapshots/discovered-N/` に残り、`acquisition.json` の `selected_sources` には入らない。抽出方式は `markdown-v1`、`html-main-v1`、`html-article-v1`、`html-body-v1` の順に試し、通ったものを `extraction_version` に書く。
+
+`recommendations.json` の `kind: candidate` は、`discovered-N` のページを引用する変更。`rule_id` は `null`、`source_id`・`body_sha256`・`source_start_line`・`source_end_line`・`exact_excerpt` は必須。`verify` は引用が保存した本文にあるかを確かめ、審査済みの規則がないので、必ず `INCOMPLETE`(`candidate_source_unreviewed`)にする。`change_counts` に `candidate` が加わる。
 
 `compare` は契約違反を検出した場合も終了コード 1(`contract_violations` が非空)。引数誤りは argparse の 2。
 
