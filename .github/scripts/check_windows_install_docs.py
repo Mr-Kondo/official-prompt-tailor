@@ -1,6 +1,7 @@
 """Run the documented Windows commands with real Git/Python and an isolated home."""
 import argparse
 import base64
+import json
 import os
 from pathlib import Path
 import re
@@ -29,6 +30,34 @@ def powershell(shell, command, env, cwd, success=True):
     if (completed.returncode == 0) != success:
         raise AssertionError(f"Documented command exited {completed.returncode}\n{command}\n{completed.stdout}\n{completed.stderr}")
     return completed
+
+
+def check_feedback_commands(shell, git, env, base):
+    """Run the docs/feedback.md blocks from a repo-root-like folder, with paths that contain a space and Japanese."""
+    blocks = re.findall(r"```text powershell\r?\n(.*?)```", (ROOT / "docs/feedback.md").read_text(encoding="utf-8"), re.S)
+    assert len(blocks) == 3, "Expected report folder, questionnaire template and export commands"
+    work = base / "feedback docs 日本語"
+    shutil.copytree(ROOT / "docs/templates", work / "docs/templates")
+    shutil.copytree(ROOT / ".claude/skills" / NAME / "scripts", work / ".claude/skills" / NAME / "scripts",
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    shutil.copy2(ROOT / ".gitignore", work / ".gitignore")
+    run([git, "init", "--initial-branch=main", str(work)], env=env)
+    folder = work / "feedback/case-001"
+    made = powershell(shell, blocks[0], env, work)
+    assert (folder / "problem-report.md").is_file() and "feedback/" in made.stdout, "Report folder command failed"
+    assert not run([git, "-C", str(work), "ls-files", "--", "feedback/"], env=env).strip(), "feedback/ must stay untracked"
+    (folder / "problem-report.md").write_bytes(b"keep me")
+    failed = powershell(shell, blocks[0], env, work, success=False)
+    assert "Report already exists" in failed.stderr and (folder / "problem-report.md").read_bytes() == b"keep me"
+    powershell(shell, blocks[1], env, work)
+    draft = folder / "draft.json"
+    document = json.loads(draft.read_text(encoding="utf-8"))
+    document.update(origin="artificial_test", stage="downstream_workbook", conditions="matched")
+    document["environment"] = {"execution_host": "codex", "os": "windows"}
+    draft.write_bytes(json.dumps(document).encode("utf-8"))
+    powershell(shell, blocks[2], env, work)
+    assert json.loads((folder / "report.json").read_text(encoding="utf-8"))["evidence_status"] == "reported_not_independently_verified"
+    print(f"PASS: {shell} docs/feedback.md: report folder, template, export; no overwrite; space/Japanese paths", flush=True)
 
 
 def main():
@@ -97,6 +126,7 @@ def main():
             assert "Skill update failed" in failed.stderr and marker.read_bytes() == b"leave alone"
             assert list(dest.parent.parent.glob(NAME + ".bak-*")) == backups
             print(f"PASS: {args.shell} {document} {target}: install, update, repeat, Git failure, installer failure; no py; space/Japanese paths", flush=True)
+        check_feedback_commands(shell, git, env, base)
 
 
 if __name__ == "__main__":
