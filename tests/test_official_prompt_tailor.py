@@ -975,6 +975,20 @@ class TestAlternateUrls(Base):
         self.assertNotEqual(rep["verdict"], "PASS_LIVE")
         self.assertIn("rereview_pending", {e["code"] for e in rep["errors"]})
 
+    def test_an_alternate_hash_does_not_make_a_first_page_body_current(self):
+        rule = {"source_body_sha256": "a" * 64, "alt_body_sha256": ["b" * 64], "source_excerpt": "x"}
+        self.assertTrue(ev._rule_stale(rule, "x", "b" * 64))
+        self.assertFalse(ev._rule_stale(rule, "x", "b" * 64, alternate=True))
+        self.assertFalse(ev._rule_stale(rule, "x", "a" * 64))
+
+    def test_a_record_that_pairs_the_alternate_url_with_another_extraction_fails(self):
+        self.with_alternate()
+        self.responses[A_URL] = (403, HTML, b"")
+        run, log = self.good_run()
+        self.rewrite_acq(run, lambda acq: acq["sources"][0].update({"extraction_version": "html-main-v1"}))
+        rep = self.verify(run, "live", log)
+        self.assertNotEqual(rep["verdict"], "PASS_LIVE")
+
     def test_both_pages_failing_reports_the_first_error_and_keeps_one_snapshot(self):
         self.with_alternate()
         self.responses[A_URL] = (403, HTML, b"")
@@ -1000,6 +1014,7 @@ class TestAlternateUrls(Base):
             "extra key": lambda r: r["sources"][0].update({"allowed_urls": [A_URL, self.ALT_URL], "alternates": [{"url": self.ALT_URL, "extraction": "markdown-v1", "x": 1}]}),
             "same page twice": lambda r: r["sources"][0].update({"alternates": [{"url": A_URL, "extraction": "html-main-v1"}]}),
             "bad alt hash": lambda r: r["rules"][0].update({"alt_body_sha256": ["nothex"]}),
+            "other host": lambda r: r["sources"][0].update({"allowed_urls": [A_URL, "https://evil.example.net/g.md"], "alternates": [{"url": "https://evil.example.net/g.md", "extraction": "markdown-v1"}]}),
         }
         for name, mutate in bad.items():
             with self.subTest(name):

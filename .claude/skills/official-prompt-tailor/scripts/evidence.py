@@ -457,8 +457,9 @@ def validate_registry(reg):
         for a in s.get("alternates", []):
             shape(a, ALT_F, "alternate")
             k = url_key(a["url"])
-            if k is None or k in seen or a["url"] not in s["allowed_urls"] or a["extraction"] not in EXTRACTIONS:
-                raise ContractError(f"source {s['source_id']}: an alternate must be a new registered url with a known extraction")
+            if (k is None or k in seen or a["url"] not in s["allowed_urls"] or a["extraction"] not in EXTRACTIONS
+                    or k[0] != url_key(s["allowed_urls"][0])[0]):
+                raise ContractError(f"source {s['source_id']}: an alternate must be a new registered url on the first url's host with a known extraction")
             seen.add(k)
         sources[s["source_id"]] = s
     uniq([s["source_id"] for s in reg["sources"]], "source_id")
@@ -665,9 +666,13 @@ def pairs(src):
 def src_for(src, e):
     """The source as the pair an entry was read from (the first pair when none matches, so a forged entry fails the usual checks)."""
     for url, ex in pairs(src)[1:]:
-        if url_key(url) == url_key(e["requested_url"]) and ex == e["extraction_version"]:
-            return {**src, "allowed_urls": [url], "extraction": ex}
+        if url_key(url) == url_key(e["requested_url"]):
+            return {**src, "allowed_urls": [url], "extraction": ex}  # the pair's own extraction: a record that names another one fails the usual check
     return src
+
+
+def on_alternate(src, e):
+    return any(url_key(url) == url_key(e["requested_url"]) for url, _ in pairs(src)[1:])
 
 
 def fetch_live(src, run, process=None, alternates=False):
@@ -913,9 +918,11 @@ def stub_review(orig_sha, reg_sha):
             "checked_at": None, "checks": [], "status": "NOT_REVIEWED"}
 
 
-def _rule_stale(rule, body, body_sha):
-    """True when the source body changed since the rule was reviewed (hash differs or the excerpt is gone)."""
-    return body_sha not in [rule["source_body_sha256"], *rule.get("alt_body_sha256", [])] or rule["source_excerpt"] not in body
+def _rule_stale(rule, body, body_sha, alternate=False):
+    """True when the source body changed since the rule was reviewed (hash differs or the excerpt is gone). The hashes of an alternate
+    page count only for a body that was read from an alternate: the first page must match the hash it was reviewed at."""
+    hashes = [rule["source_body_sha256"], *(rule.get("alt_body_sha256", []) if alternate else [])]
+    return body_sha not in hashes or rule["source_excerpt"] not in body
 
 
 def _rule_state(rule, body, body_sha):
@@ -1314,7 +1321,7 @@ def _check_change_evidence(R, c, bodies, entries, srcmap, rules, inp, acq):
         R.fail("citation", "excerpt_not_in_lines", "exact_excerpt not found in cited lines", **kw)
     if rule["source_excerpt"] not in region:
         R.fail("citation", "lines_not_rule_evidence", "cited lines do not contain the rule's source_excerpt", **kw)
-    if _rule_stale(rule, body, body_sha):
+    if _rule_stale(rule, body, body_sha, on_alternate(srcmap[sid], entries[sid])):
         R.inc("rule_review", "rereview_pending", "source body changed since the rule was reviewed", **kw)
 
 
