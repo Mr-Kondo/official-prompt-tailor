@@ -21,9 +21,10 @@ Windows PowerShell:
 
 ```text powershell
 & {
-    git -C "$HOME/official-prompt-tailor" pull --ff-only
+    $d = "$HOME/official-prompt-tailor"
+    git -C $d pull --ff-only
     if (-not $? -or $LASTEXITCODE -ne 0) { throw "Git update failed; installation stopped." }
-    python -X utf8 "$HOME/official-prompt-tailor/install.py" --target codex --user --update
+    python -X utf8 "$d/install.py" --target codex --user --update
     if (-not $? -or $LASTEXITCODE -ne 0) { throw "Skill update failed." }
 }
 ```
@@ -41,9 +42,10 @@ Windows PowerShell:
 
 ```text powershell
 & {
-    git -C "$HOME/official-prompt-tailor" pull --ff-only
+    $d = "$HOME/official-prompt-tailor"
+    git -C $d pull --ff-only
     if (-not $? -or $LASTEXITCODE -ne 0) { throw "Git update failed; installation stopped." }
-    python -X utf8 "$HOME/official-prompt-tailor/install.py" --target antigravity --user --update
+    python -X utf8 "$d/install.py" --target antigravity --user --update
     if (-not $? -or $LASTEXITCODE -ne 0) { throw "Skill update failed." }
 }
 ```
@@ -61,9 +63,10 @@ Windows PowerShell:
 
 ```text powershell
 & {
-    git -C "$HOME/official-prompt-tailor" pull --ff-only
+    $d = "$HOME/official-prompt-tailor"
+    git -C $d pull --ff-only
     if (-not $? -or $LASTEXITCODE -ne 0) { throw "Git update failed; installation stopped." }
-    python -X utf8 "$HOME/official-prompt-tailor/install.py" --target antigravity-cli --user --update
+    python -X utf8 "$d/install.py" --target antigravity-cli --user --update
     if (-not $? -or $LASTEXITCODE -ne 0) { throw "Skill update failed." }
 }
 ```
@@ -104,9 +107,11 @@ Windows PowerShell 5.1／PowerShell 7の例（**2種類のパスの置換が必�
 
 ```text powershell
 & {
-    git -C "C:/path/to/official-prompt-tailor" pull --ff-only
+    $d = "C:/path/to/official-prompt-tailor"
+    $p = "C:/path/to/my-project"
+    git -C $d pull --ff-only
     if (-not $? -or $LASTEXITCODE -ne 0) { throw "Git update failed; installation stopped." }
-    python -X utf8 "C:/path/to/official-prompt-tailor/install.py" --target codex --project "C:/path/to/my-project" --update
+    python -X utf8 "$d/install.py" --target codex --project $p --update
     if (-not $? -or $LASTEXITCODE -ne 0) { throw "Skill update failed." }
 }
 ```

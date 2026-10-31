@@ -57,9 +57,10 @@ Windows PowerShell:
 
 ```text powershell
 & {
-    git -C "$HOME/official-prompt-tailor" pull --ff-only
+    $d = "$HOME/official-prompt-tailor"
+    git -C $d pull --ff-only
     if (-not $? -or $LASTEXITCODE -ne 0) { throw "Git update failed; installation stopped." }
-    python -X utf8 "$HOME/official-prompt-tailor/install.py" --target claude-code --user --update
+    python -X utf8 "$d/install.py" --target claude-code --user --update
     if (-not $? -or $LASTEXITCODE -ne 0) { throw "Skill update failed." }
 }
 ```
