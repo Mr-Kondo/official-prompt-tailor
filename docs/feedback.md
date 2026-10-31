@@ -4,15 +4,16 @@
 
 ## 1. 報告書を用意する
 
-リポジトリのルートで実行します。フォルダ名の `case-001` は案件ごとに変えてください。同名の報告書は上書きしません。
+リポジトリのルートで実行します。フォルダ名の `case-001` は案件ごとに変えてください(PowerShell では、先頭の `$c` の値を変えます)。同名の報告書は上書きしません。
 
 Windows PowerShell 5.1／7：
 
 ```text powershell
-New-Item -ItemType Directory -Force -Path feedback/case-001 | Out-Null
-if (Test-Path feedback/case-001/problem-report.md) { throw 'Report already exists; use another case name.' }
-Copy-Item docs/templates/problem-report.md feedback/case-001/problem-report.md
-git check-ignore -v feedback/case-001/problem-report.md
+$c = "feedback/case-001"
+New-Item -ItemType Directory -Force -Path $c | Out-Null
+if (Test-Path $c/problem-report.md) { throw 'Report already exists; use another case name.' }
+Copy-Item docs/templates/problem-report.md $c/problem-report.md
+git check-ignore -v $c/problem-report.md
 git ls-files -- feedback/
 ```
 
@@ -54,14 +55,19 @@ feedback/case-001/problem-report.md を作成してください。
 このリポジトリのWindows PowerShellでの例です。Python 3.9以上を使い、同名の票がある場合は別の案件名に変えます。
 
 ```text powershell
-New-Item -ItemType Directory -Force -Path feedback/case-001 | Out-Null
-python .claude/skills/official-prompt-tailor/scripts/private_feedback.py template --out feedback/case-001/draft.json
+$c = "feedback/case-001"
+$s = ".claude/skills/official-prompt-tailor/scripts"
+New-Item -ItemType Directory -Force -Path $c | Out-Null
+python $s/private_feedback.py template --out $c/draft.json
 ```
 
 `draft.json` の選択肢を記入した後、内容と持出し条件を操作者が確認して出力します。
 
 ```text powershell
-python .claude/skills/official-prompt-tailor/scripts/private_feedback.py export --input feedback/case-001/draft.json --out feedback/case-001/report.json --confirm-share
+$c = "feedback/case-001"
+$s = ".claude/skills/official-prompt-tailor/scripts"
+python $s/private_feedback.py export --input $c/draft.json `
+    --out $c/report.json --confirm-share
 ```
 
 この票は原文版と改稿版の比較用です。通信失敗やファイルのハッシュ不一致など、票にない問題を無理に既存の項目へ当てはめません。その場合は、共有可能な最小再現例を通常の報告書にします。スクリプトは匿名化・実データ検査・自動送信を行いません。
