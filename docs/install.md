@@ -19,7 +19,7 @@ python3 "$HOME/official-prompt-tailor/install.py" --target codex --user --update
 
 Windows PowerShell:
 
-```powershell
+```text powershell
 & {
     git -C "$HOME/official-prompt-tailor" pull --ff-only
     if (-not $? -or $LASTEXITCODE -ne 0) { throw "Git update failed; installation stopped." }
@@ -39,7 +39,7 @@ python3 "$HOME/official-prompt-tailor/install.py" --target antigravity --user --
 
 Windows PowerShell:
 
-```powershell
+```text powershell
 & {
     git -C "$HOME/official-prompt-tailor" pull --ff-only
     if (-not $? -or $LASTEXITCODE -ne 0) { throw "Git update failed; installation stopped." }
@@ -59,7 +59,7 @@ python3 "$HOME/official-prompt-tailor/install.py" --target antigravity-cli --use
 
 Windows PowerShell:
 
-```powershell
+```text powershell
 & {
     git -C "$HOME/official-prompt-tailor" pull --ff-only
     if (-not $? -or $LASTEXITCODE -ne 0) { throw "Git update failed; installation stopped." }
@@ -102,7 +102,7 @@ Windows PowerShell 5.1／PowerShell 7の例（**2種類のパスの置換が必�
 
 `C:/path/to/official-prompt-tailor` は既存cloneの場所、`C:/path/to/my-project` は導入先の既存プロジェクトへ置き換えます。`python --version` で3.9以上が表示されることを確認し、`& {` から最後の `}` までまとめて実行してください。cmd.exe用ではありません。
 
-```powershell
+```text powershell
 & {
     git -C "C:/path/to/official-prompt-tailor" pull --ff-only
     if (-not $? -or $LASTEXITCODE -ne 0) { throw "Git update failed; installation stopped." }

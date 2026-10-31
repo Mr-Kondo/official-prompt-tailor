@@ -8,7 +8,7 @@
 
 Windows PowerShell 5.1／7：
 
-```powershell
+```text powershell
 New-Item -ItemType Directory -Force -Path feedback/case-001 | Out-Null
 if (Test-Path feedback/case-001/problem-report.md) { throw 'Report already exists; use another case name.' }
 Copy-Item docs/templates/problem-report.md feedback/case-001/problem-report.md
@@ -53,14 +53,14 @@ feedback/case-001/problem-report.md を作成してください。
 
 このリポジトリのWindows PowerShellでの例です。Python 3.9以上を使い、同名の票がある場合は別の案件名に変えます。
 
-```powershell
+```text powershell
 New-Item -ItemType Directory -Force -Path feedback/case-001 | Out-Null
 python .claude/skills/official-prompt-tailor/scripts/private_feedback.py template --out feedback/case-001/draft.json
 ```
 
 `draft.json` の選択肢を記入した後、内容と持出し条件を操作者が確認して出力します。
 
-```powershell
+```text powershell
 python .claude/skills/official-prompt-tailor/scripts/private_feedback.py export --input feedback/case-001/draft.json --out feedback/case-001/report.json --confirm-share
 ```
 
