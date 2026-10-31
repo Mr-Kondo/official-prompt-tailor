@@ -960,6 +960,43 @@ def replace_blocks(text, blocks):
     return new, problems + [f"generated block {n} is missing" for n in blocks if n not in seen]
 
 
+def alternates(source_id, url=None, extraction=None, write=False):
+    """Register another page of a source (`url` with `extraction`) and set, on each reviewed rule of the source whose excerpt that page
+    still carries, the hash of the page's body, so a run that had to read the page can use the rule. A rule whose excerpt is not on the
+    page gets no hash and stays unusable there. The first page and the rule's review are not touched."""
+    reg = load_for_edit() if write else ev.load_registry()[0]
+    source = next((s for s in reg["sources"] if s["source_id"] == source_id), None)
+    if source is None:
+        raise ev.ContractError(f"no source {source_id}")
+    if url:
+        host = urllib.parse.urlsplit(source["allowed_urls"][0]).hostname
+        if ev.url_key(url) is None or "#" in url or urllib.parse.urlsplit(url).hostname != host:
+            raise ev.ContractError(f"an alternate must be an https page on {host} without a fragment")
+        if url in source["allowed_urls"] or page_key(url) in {page_key(u) for s in reg["sources"] if s is not source for u in s["allowed_urls"]}:
+            raise ev.ContractError("that page is already registered")
+        if extraction not in ev.EXTRACTIONS:
+            raise ev.ContractError(f"--extraction must be one of {ev.EXTRACTIONS}")
+        source["allowed_urls"].append(url)
+        source.setdefault("alternates", []).append({"url": url, "extraction": extraction})
+    rules = [r for r in reg["rules"] if r["source_id"] == source_id and r["review_status"] == "reviewed"]
+    hashes, rows = {r["rule_id"]: [] for r in rules}, []
+    for alt in source.get("alternates", []):
+        body, sha = observe({**source, "allowed_urls": [alt["url"]], "extraction": alt["extraction"]})
+        carried = [r["rule_id"] for r in rules if r["source_excerpt"] in body]
+        for rid in carried:
+            hashes[rid].append(sha)
+        rows.append({"url": alt["url"], "extraction": alt["extraction"], "body_sha256": sha, "carried": carried,
+                     "missing": [r["rule_id"] for r in rules if r["rule_id"] not in carried]})
+    for r in rules:
+        r.pop("alt_body_sha256", None)
+        if hashes[r["rule_id"]]:
+            r["alt_body_sha256"] = sorted(set(hashes[r["rule_id"]]))
+    text = checked_registry_text(reg)
+    if write:
+        replace_registry(text, reg)
+    return {"schema_version": 1, "written": write, "source_id": source_id, "alternates": rows}
+
+
 def docs(write=False):
     reg, _ = ev.load_registry()
     paths = (README_PATH, TARGETS_PATH, TRUST_PATH)
@@ -1185,6 +1222,11 @@ def main(argv=None):
     rv.add_argument("--run")
     rv.add_argument("--context", type=int, default=CONTEXT_LINES)
     rv.add_argument("--limit", type=int)
+    al = sub.add_parser("alternates")
+    al.add_argument("--source", required=True)
+    al.add_argument("--url")
+    al.add_argument("--extraction")
+    al.add_argument("--write", action="store_true")
     dd = sub.add_parser("docs")
     dd.add_argument("--write", action="store_true")
     au = sub.add_parser("audit")
@@ -1206,6 +1248,9 @@ def main(argv=None):
             rep = adopt(args.spec, args.write)
             n = sum(len(s["rules"]) for s in rep["sources"])
             return ev._emit("adopt", 0, rep, f"{len(rep['sources'])} sources, {n} rules, " + ("written" if rep["written"] else "dry run: nothing written"))
+        if args.cmd == "alternates":
+            rep = alternates(args.source, args.url, args.extraction, args.write)
+            return ev._emit("alternates", 0, rep, f"{len(rep['alternates'])} alternates, " + ("written" if rep["written"] else "dry run: nothing written"))
         if args.cmd == "rereview":
             rep = rereview(args.source, args.rule, args.run, args.old, args.context, args.accept, args.reviewer, args.write)
             n = lambda cls: sum(1 for r in rep["rules"] if r["class"] == cls)  # noqa: E731

@@ -42,6 +42,7 @@ DEFAULT_CHANGES = [
 ]
 NO_SOURCE_OPT = "バグを修正してください。\n制約: 公開APIは変更しない。テストはpytestで。\n"
 NO_SOURCE_CHANGES = [DEFAULT_CHANGES[0], ("c2", "editorial", None, "公開APIは変更しない。", "制約: 公開APIは変更しない。", None, None)]
+sha_bytes = lambda b: hashlib.sha256(b).hexdigest()
 sha = lambda t: hashlib.sha256(t.encode("utf-8")).hexdigest()
 
 
@@ -917,6 +918,109 @@ class TestPartialEvidence(Base):
                 self.rewrite_rec(run, lambda rec: rec["changes"][0].update(edit))
                 rep = self.verify(run, "live")
                 self.assertEqual((rep["verdict"], codes(rep)), ("FAIL", {"invalid_structure", "skipped"}))
+
+
+class TestAlternateUrls(Base):
+    """A source may list other pages of the same host (a .md copy) to try when the first cannot be read (Issue #61)."""
+    ALT_URL = "https://docs.example.com/guide-alt.md"
+    ALT = ("# Best practices\nGive a check it can run so Claude can verify its own work.\n\n## Provide context\n"
+           "Reference specific files, name the constraints, and point to example patterns the change should follow. "
+           "State what done looks like, and say which parts of the system the change must leave alone.\n").encode("utf-8")
+
+    def setUp(self):
+        super().setUp()
+        self.responses[self.ALT_URL] = (200, {"content-type": "text/markdown"}, self.ALT)
+        self.alt_sha = sha(ev.process_body({"extraction": "markdown-v1", "body_locators": []}, self.ALT, "text/markdown"))
+
+    def with_alternate(self, alt_hash=True, extra=None):
+        def mutate(reg):
+            a = reg["sources"][0]
+            a["allowed_urls"].append(self.ALT_URL)
+            a["alternates"] = [{"url": self.ALT_URL, "extraction": "markdown-v1"}]
+            if alt_hash:
+                next(r for r in reg["rules"] if r["rule_id"] == "rule-verify")["alt_body_sha256"] = [self.alt_sha]
+            if extra:
+                extra(reg)
+        self.set_registry(mutate)
+
+    def test_the_first_page_is_enough_and_the_alternate_is_never_asked(self):
+        self.with_alternate()
+        code, acq = self.fetch()
+        self.assertEqual((code, self.calls), (0, [A_URL]))
+        self.assertEqual(acq["sources"][0]["requested_url"], A_URL)
+
+    def test_the_alternate_is_read_when_the_first_page_fails_and_the_entry_names_it(self):
+        self.with_alternate()
+        self.responses[A_URL] = (403, HTML, b"")
+        code, acq = self.fetch()
+        e = acq["sources"][0]
+        self.assertEqual((code, self.calls), (0, [A_URL, self.ALT_URL]))
+        self.assertEqual((e["status"], e["requested_url"], e["final_url"], e["extraction_version"]),
+                         ("live", self.ALT_URL, self.ALT_URL, "markdown-v1"))
+        self.assertEqual(e["raw_sha256"], sha_bytes(self.ALT))
+        self.assertEqual(e["body_sha256"], self.alt_sha)
+
+    def test_a_run_on_the_alternate_passes_and_its_rule_is_current(self):
+        self.with_alternate()
+        self.responses[A_URL] = (403, HTML, b"")
+        run, log = self.good_run()
+        rep = self.verify(run, "live", log)
+        self.assertEqual(rep["verdict"], "PASS_LIVE", rep["errors"])
+
+    def test_a_rule_without_the_alternate_hash_is_stale_on_the_alternate_body(self):
+        self.with_alternate(alt_hash=False)
+        self.responses[A_URL] = (403, HTML, b"")
+        run, log = self.good_run()
+        rep = self.verify(run, "live", log)
+        self.assertNotEqual(rep["verdict"], "PASS_LIVE")
+        self.assertIn("rereview_pending", {e["code"] for e in rep["errors"]})
+
+    def test_an_alternate_hash_does_not_make_a_first_page_body_current(self):
+        rule = {"source_body_sha256": "a" * 64, "alt_body_sha256": ["b" * 64], "source_excerpt": "x"}
+        self.assertTrue(ev._rule_stale(rule, "x", "b" * 64))
+        self.assertFalse(ev._rule_stale(rule, "x", "b" * 64, alternate=True))
+        self.assertFalse(ev._rule_stale(rule, "x", "a" * 64))
+
+    def test_a_record_that_pairs_the_alternate_url_with_another_extraction_fails(self):
+        self.with_alternate()
+        self.responses[A_URL] = (403, HTML, b"")
+        run, log = self.good_run()
+        self.rewrite_acq(run, lambda acq: acq["sources"][0].update({"extraction_version": "html-main-v1"}))
+        rep = self.verify(run, "live", log)
+        self.assertNotEqual(rep["verdict"], "PASS_LIVE")
+
+    def test_both_pages_failing_reports_the_first_error_and_keeps_one_snapshot(self):
+        self.with_alternate()
+        self.responses[A_URL] = (403, HTML, b"")
+        self.responses[self.ALT_URL] = (404, HTML, b"gone")
+        code, acq = self.fetch()
+        e = acq["sources"][0]
+        self.assertEqual((e["status"], e["requested_url"], e["error"]), ("blocked", A_URL, "http_403"))
+        self.assertEqual(sorted(p.name for p in (self.run_dir() / "snapshots" / "doc-a").iterdir()), ["raw.bin"])
+
+    def test_the_cache_of_an_alternate_run_is_reused_with_the_alternate_extraction(self):
+        self.with_alternate()
+        self.responses[A_URL] = (403, HTML, b"")
+        run1, _ = self.good_run("run-1")
+        self.clock.advance(hours=2)
+        self.responses.clear()
+        code, acq = self.fetch("run-2", "cache", run1)
+        self.assertEqual((code, acq["sources"][0]["status"], acq["sources"][0]["requested_url"]), (0, "cache", self.ALT_URL))
+
+    def test_an_alternate_must_be_a_registered_url_with_a_known_extraction(self):
+        bad = {
+            "alternate not in allowed_urls": lambda r: r["sources"][0].update({"alternates": [{"url": "https://docs.example.com/other.md", "extraction": "markdown-v1"}]}),
+            "unknown extraction": lambda r: r["sources"][0].update({"allowed_urls": [A_URL, self.ALT_URL], "alternates": [{"url": self.ALT_URL, "extraction": "regex-all"}]}),
+            "extra key": lambda r: r["sources"][0].update({"allowed_urls": [A_URL, self.ALT_URL], "alternates": [{"url": self.ALT_URL, "extraction": "markdown-v1", "x": 1}]}),
+            "same page twice": lambda r: r["sources"][0].update({"alternates": [{"url": A_URL, "extraction": "html-main-v1"}]}),
+            "bad alt hash": lambda r: r["rules"][0].update({"alt_body_sha256": ["nothex"]}),
+            "other host": lambda r: r["sources"][0].update({"allowed_urls": [A_URL, "https://evil.example.net/g.md"], "alternates": [{"url": "https://evil.example.net/g.md", "extraction": "markdown-v1"}]}),
+        }
+        for name, mutate in bad.items():
+            with self.subTest(name):
+                self.set_registry(mutate)
+                with self.assertRaises(ev.ContractError):
+                    self.fetch()
 
 
 class TestRouting(unittest.TestCase):

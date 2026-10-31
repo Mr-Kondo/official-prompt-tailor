@@ -24,7 +24,7 @@
 4. 検索はホストが行う(製品名とモデル名だけ。原文・機密を検索語にしない)。見つけた URL は `fetch --extra-source` で渡す。取得できるのは registry と同じホストの https ページだけ。結果は run の `discovered-sources.json` に残し、`acquisition.json` の選択資料には入れない。`--mode live` のときだけ使える。`verify` と `intake` は、保存したページの生バイト・ハッシュ・登録ホストを再検査する。
 5. 検索で見つけたページを引用する変更は `kind: candidate`。引用の一致は `verify` が確かめるが、審査済みの規則がないので参照検証は必ず `INCOMPLETE`(`candidate_source_unreviewed`)。
 6. `registry.json` は run の中で書き換えない。`maintain.py intake --run` が候補を Issue の下書きにし、登録は `propose`、審査、`adopt` の順に人が進める。
-7. 別形式 URL(`.md` 版など)への切り替えは見送る。全50資料が URL を1つしか持たず、抽出方式も資料ごとに1つで、切り替え先がない。必要になったら、`allowed_urls` ごとに抽出方式を持たせる別の決定にする。
+7. 別形式 URL(`.md` 版など)への切り替えは見送る。全50資料が URL を1つしか持たず、抽出方式も資料ごとに1つで、切り替え先がない。必要になったら、`allowed_urls` ごとに抽出方式を持たせる別の決定にする。(→ ADR 0002 で実装した)
 
 ## 成功指標と撤退条件
 

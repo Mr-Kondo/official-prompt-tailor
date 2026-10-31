@@ -225,6 +225,20 @@ python3 tools/maintain.py docs --write
 6. 新しいドメインがあれば、README の「必要な接続先」に足します。
 7. テストを実行します。
 
+### 別形式の URL を足す(`alternates`)
+
+最初のページが取れない環境(403・DNS 失敗)でも読めるように、同じホストの別形式(`.md` 版など)を資料に足せます(ADR 0002)。
+
+```bash
+python3 tools/maintain.py alternates --source <source_id> --url <別形式のURL> --extraction markdown-v1          # 確認だけ
+python3 tools/maintain.py alternates --source <source_id> --url <別形式のURL> --extraction markdown-v1 --write  # 書き込む
+```
+
+- 別形式は、資料の `alternates`(`{url, extraction}`)と `allowed_urls` に入ります。`fetch` は、最初のページが読めなかったときだけ、別形式を順に試します。`drift`・`rereview`・`adopt` は、最初のページだけを見ます。
+- コマンドは、別形式の本文を2回取って一致を確かめ、本文に引用がある規則だけに `alt_body_sha256` を記録します。引用がない規則は、別形式を読んだ run では使われません(出力の `missing`)。
+- `--url` なしで再実行すると、登録済みの別形式の `alt_body_sha256` を取り直します。本文が変わったときや、最初のページの再審査のあとに使います。
+- 別形式の本文で規則の意味が変わらないことの人の確認は、このコマンドには含まれません。
+
 ### 新しい利用先を足す
 
 利用先(`target_id`)の追加は、registry だけでは済みません。`evidence.py` の `TARGET_IDS` にも足します。registry は、`TARGET_IDS` のすべてを `targets` に定義する決まりだからです。SKILL.md の対象の表、README、[targets.md](targets.md) も更新します。`tools/maintain.py` の `ROUTING_LABELS` と `VENDORS` にも足してください(足りないと、`docs` が契約違反として知らせます)。`docs --write` が、[targets.md](targets.md) の表を直します。

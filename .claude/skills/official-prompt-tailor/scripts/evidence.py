@@ -426,14 +426,15 @@ def process_body(src, raw, content_type):
 
 # ---------------------------------------------------------------- registry
 SRC_F = {"source_id": (S, 1), "allowed_urls": (L, 1), "target_ids": (L, 1), "surfaces": (L, 1),
-         "models": (L, 1), "category": (S, 1), "extraction": (S, 1), "body_locators": (L, 1)}
+         "models": (L, 1), "category": (S, 1), "extraction": (S, 1), "body_locators": (L, 1), "alternates": (L, 0)}
+ALT_F = {"url": (S, 1), "extraction": (S, 1)}
 TGT_F = {"target_id": (S, 1), "required_sources": (L, 1), "conditional_sources": (L, 1)}
 COND_F = {"purposes": (L, 1), "surfaces": (L, 1), "source_ids": (L, 1)}
 RULE_F = {"rule_id": (S, 1), "source_id": (S, 1), "target_ids": (L, 1), "surfaces": (L, 1), "models": (L, 1),
           "kind": (S, 1), "purposes": (L, 1), "preconditions": (L, 1), "exclusions": (L, 1),
           "source_body_sha256": (SN, 1), "source_excerpt": (S, 1), "reviewed_at": (SN, 1),
           "reviewer_id": (SN, 1), "meaning": (S, 1), "source_locator": (S, 1), "allowed_change": (S, 1),
-          "review_status": (S, 1)}
+          "review_status": (S, 1), "alt_body_sha256": (L, 0)}
 
 
 def validate_registry(reg):
@@ -452,6 +453,14 @@ def validate_registry(reg):
             raise ContractError(f"source {s['source_id']}: bad extraction or <2 body_locators")
         if not set(s["target_ids"]) <= set(TARGET_IDS):
             raise ContractError(f"source {s['source_id']}: unknown target_ids")
+        seen = {url_key(s["allowed_urls"][0])}
+        for a in s.get("alternates", []):
+            shape(a, ALT_F, "alternate")
+            k = url_key(a["url"])
+            if (k is None or k in seen or a["url"] not in s["allowed_urls"] or a["extraction"] not in EXTRACTIONS
+                    or k[0] != url_key(s["allowed_urls"][0])[0]):
+                raise ContractError(f"source {s['source_id']}: an alternate must be a new registered url on the first url's host with a known extraction")
+            seen.add(k)
         sources[s["source_id"]] = s
     uniq([s["source_id"] for s in reg["sources"]], "source_id")
     for t in reg["targets"]:
@@ -487,6 +496,8 @@ def validate_registry(reg):
             raise ContractError(f"rule {r['rule_id']}: bad kind/review_status")
         if not set(r["purposes"]) <= set(PURPOSES):
             raise ContractError(f"rule {r['rule_id']}: unknown purposes")
+        if not all(isinstance(h, str) and SHA_RE.match(h) for h in r.get("alt_body_sha256", [])):
+            raise ContractError(f"rule {r['rule_id']}: bad alt_body_sha256")
         if r["review_status"] == "reviewed":
             if not (r["source_body_sha256"] and SHA_RE.match(r["source_body_sha256"]) and r["reviewer_id"]):
                 raise ContractError(f"rule {r['rule_id']}: reviewed rule needs hash and reviewer_id")
@@ -647,9 +658,44 @@ def _save_snapshot(run, sid, raw, body, entry):
         entry["body_path"], entry["body_sha256"] = f"snapshots/{sid}/body.txt", sha_bytes(body.encode("utf-8"))
 
 
-def fetch_live(src, run, process=None):
+def pairs(src):
+    """The (url, extraction) pairs of a source in the order they are tried: the first allowed URL, then its alternates."""
+    return [(src["allowed_urls"][0], src["extraction"])] + [(a["url"], a["extraction"]) for a in src.get("alternates", [])]
+
+
+def src_for(src, e):
+    """The source as the pair an entry was read from (the first pair when none matches, so a forged entry fails the usual checks)."""
+    for url, ex in pairs(src)[1:]:
+        if url_key(url) == url_key(e["requested_url"]):
+            return {**src, "allowed_urls": [url], "extraction": ex}  # the pair's own extraction: a record that names another one fails the usual check
+    return src
+
+
+def on_alternate(src, e):
+    return any(url_key(url) == url_key(e["requested_url"]) for url, _ in pairs(src)[1:])
+
+
+def fetch_live(src, run, process=None, alternates=False):
     """Fetch the first allowed URL and save what came back. `process` (default process_body) turns the bytes into the saved text:
-    tools/maintain.py passes its own for a sitemap; everything else about the fetch is the same."""
+    tools/maintain.py passes its own for a sitemap; everything else about the fetch is the same.
+    With `alternates`, a first page that cannot be read is followed by the source's alternates; the first one read is returned, and
+    when none is read the first page's error. Only a run for a user does this: drift and review watch the first page alone."""
+    first = _fetch_pair(src, run, process)
+    if first["status"] == "live" or not alternates:
+        return first
+    sid = src["source_id"]
+    for url, ex in pairs(src)[1:]:
+        with tempfile.TemporaryDirectory() as t:  # the first page's snapshot stays as the diagnosis unless an alternate is read
+            e = _fetch_pair({**src, "allowed_urls": [url], "extraction": ex}, Path(t), process)
+            if e["status"] == "live":
+                shutil.rmtree(run / "snapshots" / sid, ignore_errors=True)
+                (run / "snapshots").mkdir(parents=True, exist_ok=True)
+                shutil.move(str(Path(t) / "snapshots" / sid), str(run / "snapshots" / sid))
+                return e
+    return first
+
+
+def _fetch_pair(src, run, process=None):
     url = src["allowed_urls"][0]
     e = new_entry(src["source_id"], url)
     raw = body = None
@@ -710,7 +756,7 @@ def fetch_cache(src, cache_dir, run, now):
     if sha_bytes(raw) != old["raw_sha256"] or sha_bytes(body) != old["body_sha256"]:
         raise ContractError(f"cache {sid}: stored hash mismatch (tampered snapshot)")
     try:
-        again = process_body(src, raw, old["content_type"])
+        again = process_body(src_for(src, old), raw, old["content_type"])
     except Blocked as b:
         raise ContractError(f"cache {sid}: re-extraction failed ({b.code})")
     if again.encode("utf-8") != body:
@@ -834,7 +880,7 @@ def do_fetch(input_path, out, mode, cache=None, extra=()):
     (out / "original.md").write_bytes(original.encode("utf-8"))
     entries = []
     for sid in selected:
-        e = fetch_live(srcmap[sid], out) if mode == "live" else fetch_cache(srcmap[sid], cache, out, started)
+        e = fetch_live(srcmap[sid], out, alternates=True) if mode == "live" else fetch_cache(srcmap[sid], cache, out, started)
         if mode == "live" and e["status"] != "live":
             diag = out / "snapshots" / sid
             kept = diag.with_name(sid + ".live-error")
@@ -872,9 +918,11 @@ def stub_review(orig_sha, reg_sha):
             "checked_at": None, "checks": [], "status": "NOT_REVIEWED"}
 
 
-def _rule_stale(rule, body, body_sha):
-    """True when the source body changed since the rule was reviewed (hash differs or the excerpt is gone)."""
-    return rule["source_body_sha256"] != body_sha or rule["source_excerpt"] not in body
+def _rule_stale(rule, body, body_sha, alternate=False):
+    """True when the source body changed since the rule was reviewed (hash differs or the excerpt is gone). The hashes of an alternate
+    page count only for a body that was read from an alternate: the first page must match the hash it was reviewed at."""
+    hashes = [rule["source_body_sha256"], *(rule.get("alt_body_sha256", []) if alternate else [])]
+    return body_sha not in hashes or rule["source_excerpt"] not in body
 
 
 def _rule_state(rule, body, body_sha):
@@ -1214,6 +1262,7 @@ def _check_body(R, run, e, src, sid, row):
         R.fail("body_integrity", "hash_mismatch", "raw/body bytes differ from recorded SHA-256", source_id=sid)
         row["integrity_status"] = "FAIL"
         return None
+    src = src_for(src, e)
     if e["extraction_version"] not in EXTRACTIONS or e["extraction_version"] != src["extraction"]:
         R.inc("body_integrity", "unsupported_extraction_version", f"extraction {e['extraction_version']!r} not supported", source_id=sid)
         return None
@@ -1272,7 +1321,7 @@ def _check_change_evidence(R, c, bodies, entries, srcmap, rules, inp, acq):
         R.fail("citation", "excerpt_not_in_lines", "exact_excerpt not found in cited lines", **kw)
     if rule["source_excerpt"] not in region:
         R.fail("citation", "lines_not_rule_evidence", "cited lines do not contain the rule's source_excerpt", **kw)
-    if _rule_stale(rule, body, body_sha):
+    if _rule_stale(rule, body, body_sha, on_alternate(srcmap[sid], entries[sid])):
         R.inc("rule_review", "rereview_pending", "source body changed since the rule was reviewed", **kw)
 
 

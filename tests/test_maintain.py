@@ -15,7 +15,7 @@ from unittest import mock
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 import maintain  # noqa: E402
-from test_official_prompt_tailor import A_URL, API_URL, HTML, NO_SOURCE_CHANGES, NO_SOURCE_OPT, ROOT, SKILL, Base, codes, ev, sha  # noqa: E402
+from test_official_prompt_tailor import A_URL, API_URL, HTML, MD_URL, NO_SOURCE_CHANGES, NO_SOURCE_OPT, ROOT, SKILL, Base, codes, ev, sha  # noqa: E402
 
 INDEX_URL, NEW_URL, NEW_MD = "https://docs.example.com/llms.txt", "https://docs.example.com/new-guide", "https://docs.example.com/new-notes.md"
 SECOND_URL = "https://docs.example.com/second-guide"
@@ -496,6 +496,70 @@ class AdoptBase(MaintainBase):
 
     def registry(self):
         return json.loads(ev.REGISTRY_PATH.read_text(encoding="utf-8"))
+
+
+class TestAlternates(AdoptBase):
+    """`alternates` registers another page of a source and records which rules its body still carries (Issue #61)."""
+    ALT_URL = "https://docs.example.com/guide-alt.md"
+    ALT = ("# Best practices\nGive a check it can run so Claude can verify its own work.\n\n## Provide context\n"
+           "Name the constraints and point to example patterns the change should follow. State what done looks like, "
+           "and say which parts of the system the change must leave alone.\n").encode("utf-8")
+
+    def setUp(self):
+        super().setUp()
+        self.responses[self.ALT_URL] = (200, {"content-type": "text/markdown"}, self.ALT)
+
+    def run_tool(self, *extra):
+        return self.tool("alternates", "--source", "doc-a", "--url", self.ALT_URL, "--extraction", "markdown-v1", *extra)
+
+    def test_a_dry_run_reports_the_rules_the_alternate_carries_and_writes_nothing(self):
+        code, out, err = self.run_tool()
+        rep = json.loads(out)
+        self.assertEqual((code, rep["written"]), (0, False))
+        self.assertIn("rule-verify", rep["alternates"][0]["carried"])
+        self.assertIn("rule-model", rep["alternates"][0]["missing"])
+        self.assertEqual(ev.REGISTRY_PATH.read_bytes(), self.before)
+
+    def test_write_adds_the_alternate_and_the_alternate_hash_only_to_rules_whose_excerpt_is_in_it(self):
+        self.assertEqual(self.run_tool("--write")[0], 0)
+        reg, _ = ev.load_registry()
+        doc = next(s for s in reg["sources"] if s["source_id"] == "doc-a")
+        self.assertEqual((doc["allowed_urls"][-1], doc["alternates"]), (self.ALT_URL, [{"url": self.ALT_URL, "extraction": "markdown-v1"}]))
+        alt_sha = sha(ev.process_body({"extraction": "markdown-v1", "body_locators": []}, self.ALT, "text/markdown"))
+        hashed = {r["rule_id"]: r.get("alt_body_sha256") for r in reg["rules"] if r["source_id"] == "doc-a"}
+        self.assertEqual(hashed["rule-verify"], [alt_sha])
+        self.assertIsNone(hashed["rule-model"])
+        self.assertEqual(maintain.dump_registry(reg).encode("utf-8"), ev.REGISTRY_PATH.read_bytes())
+
+    def test_a_second_run_changes_nothing_and_a_changed_page_replaces_the_old_hash(self):
+        self.run_tool("--write")
+        once = ev.REGISTRY_PATH.read_bytes()
+        self.assertEqual(self.tool("alternates", "--source", "doc-a", "--write")[0], 0)
+        self.assertEqual(ev.REGISTRY_PATH.read_bytes(), once)
+        self.responses[self.ALT_URL] = (200, {"content-type": "text/markdown"}, self.ALT + b"One more sentence about what the change must not touch.\n")
+        self.tool("alternates", "--source", "doc-a", "--write")
+        reg, _ = ev.load_registry()
+        self.assertEqual(len(next(r for r in reg["rules"] if r["rule_id"] == "rule-verify")["alt_body_sha256"]), 1)
+
+    def test_a_page_on_another_host_or_already_registered_is_refused(self):
+        for url in ("https://evil.example.net/guide.md", MD_URL):
+            with self.subTest(url=url):
+                code, out, err = self.tool("alternates", "--source", "doc-a", "--url", url, "--extraction", "markdown-v1", "--write")
+                self.assertNotEqual(code, 0)
+                self.assertEqual(ev.REGISTRY_PATH.read_bytes(), self.before)
+
+    def test_the_md_form_of_the_sources_own_page_is_allowed(self):
+        own = API_URL + ".md"
+        self.responses[own] = (200, {"content-type": "text/markdown"}, self.ALT)
+        code, out, _ = self.tool("alternates", "--source", "doc-api", "--url", own, "--extraction", "markdown-v1")
+        self.assertEqual((code, json.loads(out)["alternates"][0]["url"]), (0, own))
+
+    def test_a_page_that_cannot_be_read_writes_nothing(self):
+        self.responses[self.ALT_URL] = (404, HTML, b"")
+        with mock.patch.object(maintain.time, "sleep", lambda s: None):
+            code, _, _ = self.run_tool("--write")
+        self.assertNotEqual(code, 0)
+        self.assertEqual(ev.REGISTRY_PATH.read_bytes(), self.before)
 
 
 class TestAdopt(AdoptBase):
