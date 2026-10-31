@@ -174,7 +174,9 @@ Windows PowerShell:
 | 意味審査 | `assess` | `PASS` → 0、`FAIL` → 1、`INCOMPLETE`(未審査・校正不足・判断不足)→ 2 |
 | 効果測定 | `compare` | `IMPROVED_ON_TEST_SET` → 0、`REGRESSED` / `NO_CLEAR_IMPROVEMENT` → 1、`NOT_EVALUATED` / `INCOMPLETE` → 2。契約違反は 1 |
 
-`fetch` の終了コードは、0 が「必須資料の取得・本文検査に成功」、1 が「契約違反」、2 が「blocked / missing / stale / target 未解決」です。**`fetch` の 0 は、検証済みではありません。** 引数の誤りは、argparse の 2 です。
+`fetch` の終了コードは、0 が「必須資料の取得・本文検査に成功」、1 が「契約違反」、3 が「一部の資料だけ取得(取れた資料で最適化を続けられる。結果は候補で、検証済みではない)」、2 が「何も取得できない / target 未解決」です。**`fetch` の 0 は、検証済みではありません。** 引数の誤りは、argparse の 2 です。
+
+資料が一部取れなくても、取れた資料で最適化を続けられます(終了コード3)。標準出力の `coverage` が、取れた資料と取れなかった資料(理由つき)を示します。live で取れなかった資料は、7日以内の前の run の取得物で自動的に補い、それでも足りないときは、ホストが製品名とモデル名だけで検索し、公式ドメインのページを `fetch --extra-source` で渡します。検索で見つけたページは審査済みの規則がないので、変更は `candidate` として記録し、参照検証は `INCOMPLETE` のままです。`registry.json` は書き換えません。手順は[補い方](.claude/skills/official-prompt-tailor/references/fallback.md)、決定の理由は [adr/0001](adr/0001-partial-evidence-and-search-fallback.md) にあります。
 
 `drift` は、この 3 つとは別の、資料の更新確認です。規則の審査後に資料の本文が変わったかを、ハッシュと引用の有無で調べます。終了コードは、`CURRENT` → 0、`DRIFT` / `INCOMPLETE` → 2、契約違反 → 1 です。
 

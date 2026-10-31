@@ -15,6 +15,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import socket
 import statistics
 import subprocess
@@ -563,7 +564,7 @@ def model_hint(reg, model_id):
     """Registered model ids that differ from model_id only in spelling (case, '.', '_' or spaces, a 'claude-' prefix, a date suffix).
     A hint for the reader: the selection itself needs the exact id."""
     def key(m):
-        m = re.sub(r"[\s._]+", "-", m.strip().lower())
+        m = re.sub(r"[\s._]+", "-", re.sub(r"([a-z])(\d)", r"\1-\2", m.strip().lower()))
         return re.sub(r"^claude-", "", re.sub(r"-(\d{8}|\d{4}-\d{2}-\d{2})$", "", m))
     registered = sorted({m for s in reg["sources"] for m in s["models"] if m != "all"})
     return [] if model_id in registered else [m for m in registered if key(m) == key(model_id)]
@@ -734,7 +735,67 @@ def resolve_workspace_file(p):
     return rp
 
 
-def do_fetch(input_path, out, mode, cache=None):
+def fetch_sibling_cache(src, out, now):
+    """A live fetch failed: use the newest earlier run next to this one that holds the source within FRESH_DAYS
+    (a cache entry, so the run can never be PASS_LIVE). None if there is no such run."""
+    sid = src["source_id"]
+    runs = [d for d in out.parent.iterdir() if d != out and (d / "acquisition.json").is_file()]
+    for d in sorted(runs, key=lambda d: (d / "acquisition.json").stat().st_mtime, reverse=True)[:20]:
+        try:
+            e = fetch_cache(src, d, out, now)
+        except (ContractError, Unreadable, OSError, KeyError):
+            continue
+        if e["status"] == "cache":
+            return e
+        shutil.rmtree(out / "snapshots" / sid, ignore_errors=True)  # stale: fetch_cache saved it, it is not used
+    return None
+
+
+def official_hosts(reg):
+    return {urllib.parse.urlsplit(u).hostname for s in reg["sources"] for u in s["allowed_urls"]}
+
+
+def fetch_discovered(reg, url, n, out):
+    """A page the host found by search: fetched only from a host the registry already lists, kept apart from the registered sources.
+    Its extraction is tried in turn (the page is not registered, so nobody chose one) and it has no reviewed rule."""
+    sid = f"discovered-{n}"
+    k = url_key(urllib.parse.urldefrag(url)[0])
+    if k is None or k[0] not in official_hosts(reg):
+        e = new_entry(sid, url)
+        e["error"] = "host_not_registered" if k else "url_not_https_or_has_userinfo_or_port"
+        return e
+    chosen = []
+
+    def process(src, raw, content_type):
+        last = None
+        for ex in ("markdown-v1", "html-main-v1", "html-article-v1", "html-body-v1"):
+            try:
+                body = process_body({**src, "extraction": ex}, raw, content_type)
+            except Blocked as b:
+                last = b
+                continue
+            chosen.append(ex)
+            return body
+        raise last
+    e = fetch_live({"source_id": sid, "allowed_urls": [url], "extraction": "html-main-v1", "body_locators": []}, out, process)
+    if chosen:
+        e["extraction_version"] = chosen[0]
+    return e
+
+
+def coverage(acq):
+    """What the run could read: the sources it got (live, or from an earlier run's cache) and the ones it did not, with why."""
+    rows = acq["sources"]
+    network = {urllib.parse.urlsplit(e["requested_url"]).hostname for e in rows if e["status"] == "blocked"
+               and (e["error"] or "").startswith(("network_error", "dns_failure", "http_403"))}
+    return {"selected": len(rows), "live": [e["source_id"] for e in rows if e["status"] == "live"],
+            "cache": [e["source_id"] for e in rows if e["status"] == "cache"],
+            "missing": [{"source_id": e["source_id"], "status": e["status"], "error": e["error"]}
+                        for e in rows if e["status"] not in ("live", "cache")],
+            "network_denied_hosts": sorted(network)}
+
+
+def do_fetch(input_path, out, mode, cache=None, extra=()):
     reg, reg_sha = load_registry()
     try:
         inp_raw = Path(input_path).read_bytes()
@@ -745,6 +806,8 @@ def do_fetch(input_path, out, mode, cache=None):
     except (UnicodeDecodeError, ValueError) as e:
         raise ContractError(f"input: invalid JSON ({e})")
     validate_input(inp)
+    if extra and mode != "live":
+        raise ContractError("--extra-source needs --mode live")
     original = read_text(resolve_workspace_file(inp["original_path"]))
     out = Path(out)
     safe_id(out.name, "run id")
@@ -771,7 +834,22 @@ def do_fetch(input_path, out, mode, cache=None):
     (out / "original.md").write_bytes(original.encode("utf-8"))
     entries = []
     for sid in selected:
-        entries.append(fetch_live(srcmap[sid], out) if mode == "live" else fetch_cache(srcmap[sid], cache, out, started))
+        e = fetch_live(srcmap[sid], out) if mode == "live" else fetch_cache(srcmap[sid], cache, out, started)
+        if mode == "live" and e["status"] != "live":
+            diag = out / "snapshots" / sid
+            kept = diag.with_name(sid + ".live-error")
+            if diag.exists():
+                diag.rename(kept)
+            c = fetch_sibling_cache(srcmap[sid], out, started)
+            if c is not None:
+                e = c
+                shutil.rmtree(kept, ignore_errors=True)
+            elif kept.exists():
+                kept.rename(diag)
+        entries.append(e)
+    if extra:
+        write_json(out / "discovered-sources.json", {"schema_version": 1, "sources": [
+            fetch_discovered(reg, u, n, out) for n, u in enumerate(extra, 1)]})
     acq = {"schema_version": 1, "run_id": out.name, "started_at": iso(started), "mode": mode,
            "registry_sha256": reg_sha, "input_sha256": sha_bytes(inp_raw), "original_sha256": sha_text(original),
            "selected_sources": selected, "sources": entries}
@@ -780,8 +858,11 @@ def do_fetch(input_path, out, mode, cache=None):
     write_json(out / "evaluation.json", {"schema_version": 1, "status": "NOT_EVALUATED",
                                          "reason": "no comparison executed", "target_id": inp["target_id"]})
     want = "live" if mode == "live" else "cache"
-    ok = inp["target_id"] != "unresolved" and all(e["status"] == want for e in entries)
-    return (0 if ok else 2), acq
+    resolved = inp["target_id"] != "unresolved"
+    if resolved and all(e["status"] == want for e in entries):
+        return 0, acq
+    # 3: some sources were read, so the run goes on with them as a candidate; 2: nothing was read
+    return (3 if resolved and any(e["status"] in ("live", "cache") for e in entries) else 2), acq
 
 
 def stub_review(orig_sha, reg_sha):
@@ -960,7 +1041,7 @@ def validate_recommendations(rec):
     for c in rec["changes"]:
         shape(c, CHG_F, "change")
         safe_id(c["change_id"], "change_id")
-        if c["kind"] not in ("official", "inference", "editorial"):
+        if c["kind"] not in ("official", "inference", "editorial", "candidate"):
             raise ContractError(f"change {c['change_id']}: bad kind")
         cited = ("rule_id", "source_id", "body_sha256", "source_start_line", "source_end_line", "exact_excerpt")
         if c["kind"] == "editorial" and any(c[k] is not None for k in cited):
@@ -968,6 +1049,8 @@ def validate_recommendations(rec):
         have = sum(c[k] is not None for k in cited)
         if (c["kind"] == "official" and have < len(cited)) or (c["kind"] == "inference" and 0 < have < len(cited)):
             raise ContractError(f"change {c['change_id']}: needs rule_id/source/lines/excerpt/hash (inference: all or none)")
+        if c["kind"] == "candidate" and (c["rule_id"] is not None or any(c[k] is None for k in cited[1:])):
+            raise ContractError(f"change {c['change_id']}: a candidate cites a discovered source/lines/excerpt/hash and no rule_id")
         if c["body_sha256"] is not None and not SHA_RE.match(c["body_sha256"]):
             raise ContractError(f"change {c['change_id']}: bad body_sha256")
     uniq([c["change_id"] for c in rec["changes"]], "change_id")
@@ -1082,11 +1165,13 @@ def verify(run, mode, host_log=None):
             bodies[sid] = body
 
     # changes: citation, scope, rule review
-    counts = {"official": 0, "inference": 0, "editorial": 0}
+    counts = {"official": 0, "inference": 0, "editorial": 0, "candidate": 0}
     for c in rec["changes"]:
         counts[c["kind"]] += 1
         if c["rule_id"] is not None:
             _check_change_evidence(R, c, bodies, entries, srcmap, rules, inp, acq)
+        elif c["kind"] == "candidate":
+            _check_candidate(R, run, c, reg)
     _check_binding(R, rec, orig, opt)
 
     # read observation
@@ -1189,6 +1274,43 @@ def _check_change_evidence(R, c, bodies, entries, srcmap, rules, inp, acq):
         R.fail("citation", "lines_not_rule_evidence", "cited lines do not contain the rule's source_excerpt", **kw)
     if _rule_stale(rule, body, body_sha):
         R.inc("rule_review", "rereview_pending", "source body changed since the rule was reviewed", **kw)
+
+
+def _check_candidate(R, run, c, reg):
+    """A change that cites a page found by search. The quote is checked against the saved body; no rule reviewed the page,
+    so the verdict can be INCOMPLETE at best."""
+    kw = {"change_id": c["change_id"], "source_id": c["source_id"]}
+    R.inc("citation", "candidate_source_unreviewed", "the cited page was found by search and no reviewed rule covers it", **kw)
+    try:
+        e = next((x for x in load_json(run / "discovered-sources.json")["sources"] if x["source_id"] == c["source_id"]), None)
+        raw = safe_join(run, e["body_path"]).read_bytes() if e and e["status"] == "live" else None
+    except (Unreadable, ContractError, OSError, KeyError, TypeError):
+        raw = None
+    if raw is None:
+        R.fail("citation", "unknown_candidate_source", "no live discovered source with this id", **kw)
+        return
+    key = url_key(urllib.parse.urldefrag(e["final_url"] or e["requested_url"])[0])
+    if key is None or key[0] not in official_hosts(reg):
+        R.fail("citation", "candidate_host_not_registered", "the discovered page is not on a host the registry lists", **kw)
+        return
+    try:  # the same re-check a cache fetch makes: the raw bytes match their hash and give this body again
+        again = process_body({"extraction": e["extraction_version"], "body_locators": []},
+                             safe_join(run, e["raw_path"]).read_bytes(), e["content_type"])
+        same = sha_bytes(safe_join(run, e["raw_path"]).read_bytes()) == e["raw_sha256"] and again.encode("utf-8") == raw
+    except (Blocked, OSError, ContractError, KeyError):
+        same = False
+    if not same:
+        R.fail("citation", "candidate_snapshot_mismatch", "the saved page does not match its raw bytes or hash", **kw)
+        return
+    if sha_bytes(raw) != e["body_sha256"] or c["body_sha256"] != e["body_sha256"]:
+        R.fail("citation", "body_hash_mismatch", "change cites a different body hash than the discovered page", **kw)
+        return
+    lines = raw.decode("utf-8").split("\n")[:-1]
+    s, t = c["source_start_line"], c["source_end_line"]
+    if not (1 <= s <= t <= len(lines)):
+        R.fail("citation", "bad_line_range", f"lines {s}-{t} outside body (1-{len(lines)})", **kw)
+    elif len(c["exact_excerpt"]) > MAX_EXCERPT or not c["exact_excerpt"] or c["exact_excerpt"] not in "\n".join(lines[s - 1:t]):
+        R.fail("citation", "excerpt_not_in_lines", "exact_excerpt missing from the cited lines or too long", **kw)
 
 
 def _check_binding(R, rec, orig, opt):
@@ -1999,13 +2121,21 @@ def sources_report(run, host_log=None):
         elif item["in_scope"] is False:
             problem("fail", "cited_rule_out_of_scope", f"rule {c['rule_id']} is unreviewed or does not apply to this target, purpose, surface and model", **ids)
     log_sha = _source_reads(run, inp["execution_host"], host_log, rows, rec, problem)
+    for c in (rec["changes"] if rec else []):
+        if c["kind"] == "candidate":
+            problem("incomplete", "candidate_source_unreviewed", "the cited page was found by search and no reviewed rule covers it",
+                    change_id=c["change_id"], source_id=c["source_id"])
+    found = {x["source_id"]: x for x in load_json(run / "discovered-sources.json")["sources"]} if (run / "discovered-sources.json").is_file() else {}
+    candidates = [{"change_id": c["change_id"], "source_id": c["source_id"], "lines": [c["source_start_line"], c["source_end_line"]],
+                   "url": (found.get(c["source_id"]) or {}).get("final_url") or (found.get(c["source_id"]) or {}).get("requested_url")}
+                  for c in (rec["changes"] if rec else []) if c["kind"] == "candidate"]
     levels = {p["severity"] for p in problems}
     return {"schema_version": 1, "mode": "run", "run_id": acq["run_id"],
             "verdict": "INCONSISTENT" if "fail" in levels else ("INCOMPLETE" if "incomplete" in levels else "CONSISTENT"),
             "input": {k: inp[k] for k in ("execution_host", "target_id", "target_surface", "model_id", "purpose")},
             "registry": {"sha256": reg_sha, "run_sha256": acq["registry_sha256"], "matches": same},
             "fetch": {"mode": acq["mode"], "started_at": acq["started_at"]},
-            "model": plan["model"], "selected": rows, "skipped": plan["skipped"], "citations": citations,
+            "model": plan["model"], "selected": rows, "skipped": plan["skipped"], "citations": citations, "candidates": candidates,
             "review": _review_summary(rules_by_id[i] for i in sorted({c["rule_id"] for c in changes}) if i in rules_by_id),
             "problems": problems, "host_log_sha256": log_sha}
 
@@ -2085,7 +2215,7 @@ def _read_text(r):
             "body_not_verified": "未観測(本文を確認できない)"}.get(r["reason"], "未観測")
 
 
-SOURCES_FORMAT = 4  # raise it whenever render_sources changes its wording or layout: a pasted report is compared only with the same format
+SOURCES_FORMAT = 5  # raise it whenever render_sources changes its wording or layout: a pasted report is compared only with the same format
 FORMAT_MARK = re.compile(r"<!-- sources-report format (\d+) -->")
 
 
@@ -2124,6 +2254,10 @@ def render_sources(rep):
             sha = f"`{x['body_sha256'][:12]}…` {mark[x['integrity']]}" if x["body_sha256"] else mark[x["integrity"]]
             n = "?" if x["rules"]["applicable"] is None else x["rules"]["applicable"]
             out.append(f"| [`{x['source_id']}`]({x['url']}) | {why(x)} | {x['status']} {x['fetched_at'] or ''} | {sha} | {n} / {len(x['rules']['cited'])} | {_read_text(x['read'])} |")
+    unread = [x for x in rep["selected"] if not plan and x["status"] not in ("live", "cache")]
+    if unread:
+        out += ["", "取得できなかった資料: " + "、".join(f"`{x['source_id']}`({x['error'] or x['status']})" for x in unread)
+                + "。これらの本文は読めていないので、その規則は根拠に使えません。"]
     rest = [x for x in rep["skipped"] if x["reason"] == "route_not_matched" and x["models"] == ["all"]]  # the model guides were listed above
     if rest:
         out += ["", f"## 選ばなかった資料(モデル別の資料を除く。経路に合わないもの、{len(rest)} 件)", ""]
@@ -2134,6 +2268,9 @@ def render_sources(rep):
             out += ["| `model_id` | 追加で選ばれる資料 |", "|---|---|"]
             out += [f"| `{m}` | {_ids(a) if a else 'なし(この `target_surface` ではモデル別の資料が選ばれません)'} |" for m, a in rep["models"]["added"].items()]
     if not plan:
+        if rep["candidates"]:
+            out += ["", "## 公式候補(未審査)", "", "検索で見つけた公式ドメインのページです。審査済みの規則がないので、`official` の根拠にはしていません。", ""]
+            out += [f"- {c['change_id']}: [{c['source_id']}]({c['url']}) の {c['lines'][0]}-{c['lines'][1]} 行" for c in rep["candidates"]]
         out += ["", "## 引用した規則と審査者", ""]
         if rep["citations"]:
             out += ["| 変更 | 規則 | 資料 | 行 | 審査者 | 人の審査 | 範囲内 |", "|---|---|---|---|---|---|---|"]
@@ -2682,6 +2819,7 @@ def main(argv=None):
     f.add_argument("--out", required=True)
     f.add_argument("--mode", choices=("live", "cache"), required=True)
     f.add_argument("--cache")
+    f.add_argument("--extra-source", action="append", default=[], help="a page the host found by search (a registered host only)")
     v = sub.add_parser("verify")
     v.add_argument("--run", required=True)
     v.add_argument("--mode", choices=("live", "cache"), required=True)
@@ -2725,9 +2863,14 @@ def main(argv=None):
             code = 0 if checked["status"] in ("CONSISTENT_EXECUTION_RECORD", "SKIPPED_REPORTED") else 1
             return _emit("readability", code, {"execution": rep, "verification": checked}, checked["status"])
         if args.cmd == "fetch":
-            code, acq = do_fetch(args.input, args.out, args.mode, args.cache)
+            code, acq = do_fetch(args.input, args.out, args.mode, args.cache, args.extra_source)
             bad = [f"{e['source_id']}={e['status']}({e['error']})" for e in acq["sources"] if e["status"] != ("live" if args.mode == "live" else "cache")]
-            return _emit("fetch", code, acq, "ok" if code == 0 else "not satisfied: " + (", ".join(bad) or "target unresolved"))
+            reg, _ = load_registry()
+            found = Path(args.out) / "discovered-sources.json"
+            shown = {**acq, "coverage": coverage(acq), "model_hint": model_hint(reg, load_json(Path(args.input))["model_id"]),
+                     "discovered": load_json(found)["sources"] if found.is_file() else []}
+            return _emit("fetch", code, shown, "ok" if code == 0 else
+                         ("partial, go on with what was read: " if code == 3 else "not satisfied: ") + (", ".join(bad) or "target unresolved"))
         if args.cmd == "verify":
             rep = verify(args.run, args.mode, args.host_log)
             code = {"PASS_LIVE": 0, "PASS_CACHE": 0, "FAIL": 1}.get(rep["verdict"], 2)
