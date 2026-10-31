@@ -55,7 +55,7 @@ python3 "$HOME/official-prompt-tailor/install.py" --target claude-code --user --
 
 Windows PowerShell:
 
-```powershell
+```text powershell
 & {
     git -C "$HOME/official-prompt-tailor" pull --ff-only
     if (-not $? -or $LASTEXITCODE -ne 0) { throw "Git update failed; installation stopped." }

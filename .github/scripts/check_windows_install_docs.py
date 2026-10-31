@@ -39,8 +39,8 @@ def main():
     assert os.name == "nt" and shell and git, "Windows, Git and the requested PowerShell are required"
     print(f"Python {sys.version}; PowerShell " + run([shell, "-NoProfile", "-Command", "$PSVersionTable.PSVersion.ToString()"]).strip(), flush=True)
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    blocks = [("README.md", b) for b in re.findall(r"```powershell\r?\n(.*?)```", readme, re.S)]
-    blocks += [("docs/install.md", b) for b in re.findall(r"```powershell\r?\n(.*?)```", (ROOT / "docs/install.md").read_text(encoding="utf-8"), re.S)]
+    blocks = [("README.md", b) for b in re.findall(r"```text powershell\r?\n(.*?)```", readme, re.S)]
+    blocks += [("docs/install.md", b) for b in re.findall(r"```text powershell\r?\n(.*?)```", (ROOT / "docs/install.md").read_text(encoding="utf-8"), re.S)]
     assert len(blocks) == 5, "Expected four product commands and one project command"
     clone = next(b for b in re.findall(r"```sh\r?\n(.*?)```", readme, re.S) if "git clone --branch main" in b)
     targets = {"claude-code": ".claude/skills", "codex": ".agents/skills",
