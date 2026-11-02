@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "id": "separate-maintenance-knowledge",
+  "title": "更新提案の知見を実行用スキルから分けて保持する",
+  "status": "hypothesis",
+  "problem": "更新判断の根拠がIssue・ADR・評価へ分散し、再利用には探索が必要になる。探索コストの実測はまだない。",
+  "cause_hypothesis": "記録間の索引がないことが、同じ調査や不採用案の再提案につながる可能性がある。原因は未確認。",
+  "conditions": "official-prompt-tailorの保守・更新提案時。通常のプロンプト生成には使用しない。",
+  "counterexamples": "記録が少なくIssueだけで十分な場合、索引の維持費が便益を上回る可能性がある。",
+  "scope": {
+    "revision": "baseline: eb4c38791432d483d5b3d3701eec6bc54932ae27; candidate: Issue #69",
+    "hosts": ["claude-code", "codex", "antigravity", "antigravity-cli"],
+    "models": ["unknown"]
+  },
+  "evidence": [
+    {"kind": "research", "ref": "https://arxiv.org/html/2608.27454v1", "partition": "not-applicable"},
+    {"kind": "report", "ref": "https://github.com/Mr-Kondo/official-prompt-tailor/issues/24", "partition": "development"},
+    {"kind": "observation", "ref": "tools/maintain.py", "partition": "development"}
+  ],
+  "proposal": {
+    "summary": "既存の更新工程へ知見の索引と採否履歴を追加し、次の関連更新1件で探索時間と維持費を比較する。",
+    "ref": "adr/0003-wikiskill-maintenance-knowledge.md"
+  },
+  "decisions": [
+    {
+      "date": "2026-11-02",
+      "outcome": "pending",
+      "reason": "限定導入の実装は依頼済みだが、探索時間や再提案の減少は未測定。導入の承認と有効性の確認を分ける。",
+      "criteria": "重要要件を維持し、探索時間の削減が知見の維持時間を上回る。同じ不採用案の再提案が増えない。",
+      "baseline_ref": null,
+      "candidate_ref": null,
+      "evaluation_refs": [],
+      "review_ref": null,
+      "critical_checks": "unknown",
+      "cost_limit": "次の関連更新1件、知見整理30分まで。追加API課金は別途許可が必要。",
+      "stop_condition": "維持費が便益を上回る、誤提案が減らない、または根拠の弱い規則が増える場合は拡張停止。"
+    }
+  ]
+}
