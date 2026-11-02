@@ -80,7 +80,8 @@ class KnowledgeTests(unittest.TestCase):
 
     def test_private_traversal_and_external_references_fail(self):
         for ref in ("../outside.md", "/tmp/log", "feedback/log.md", "outputs/run.md", ".git/config",
-                    "https://user:password@example.com/a", "https://example.com/a?token=value", "http://example.com/a"):
+                    "https://user:password@example.com/a", "https://example.com/a?token=value", "http://example.com/a",
+                    "https://@example.com/a", "https://:@example.com/a", "https://example.com/a b", "https://example.com/a\n"):
             with self.subTest(ref=ref), self.assertRaises(knowledge.KnowledgeError):
                 knowledge.reference(self.root, ref)
 

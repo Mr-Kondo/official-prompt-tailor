@@ -32,10 +32,13 @@ def text(value):
 
 def reference(root, value):
     require(text(value), "reference must be a nonempty string")
+    require(value == value.strip() and not any(ord(c) < 32 or ord(c) == 127 for c in value),
+            "reference contains whitespace/control characters")
     parsed = urlsplit(value)
     if parsed.scheme:
-        require(parsed.scheme == "https" and parsed.hostname and not parsed.username
-                and not parsed.password and not parsed.query, "use public HTTPS references without credentials/query")
+        require(parsed.scheme == "https" and parsed.hostname and parsed.username is None
+                and parsed.password is None and not parsed.query and not any(c.isspace() for c in value),
+                "use public HTTPS references without credentials/query/whitespace")
         return
     path = PurePosixPath(value)
     require(not path.is_absolute() and ".." not in path.parts and "\\" not in value
