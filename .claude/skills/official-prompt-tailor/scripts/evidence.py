@@ -260,10 +260,14 @@ def decode_content(headers, raw):
     return body
 
 
-def http_get(url):
+ACCEPT_ANY = "text/html,text/markdown,text/plain;q=0.9"
+# A page reviewed as HTML must come back as HTML: ai.google.dev answers ACCEPT_ANY with Markdown (2026-11-02), a different body.
+ACCEPT_HTML = "text/html,application/xhtml+xml"
+
+
+def http_get(url, accept=ACCEPT_ANY):
     """One request, redirects not followed. Returns (status, lower-cased headers, body<=MAX_BYTES+1)."""
-    req = urllib.request.Request(url, headers={"User-Agent": "official-prompt-tailor/1",
-                                               "Accept": "text/html,text/markdown,text/plain;q=0.9"})
+    req = urllib.request.Request(url, headers={"User-Agent": "official-prompt-tailor/1", "Accept": accept})
     try:
         r = urllib.request.build_opener(_NoRedirect).open(req, timeout=TIMEOUT)
     except urllib.error.HTTPError as e:
@@ -706,7 +710,7 @@ def _fetch_pair(src, run, process=None):
                 raise Blocked("redirect_not_registered:" + url if e["redirect_chain"] else why)
             check_host_public(urllib.parse.urlsplit(url).hostname)
             try:
-                status, headers, raw = http_get(url)
+                status, headers, raw = http_get(url, ACCEPT_ANY if src["extraction"] in MARKDOWN else ACCEPT_HTML)
             except (urllib.error.URLError, OSError, http.client.HTTPException) as ex:
                 raise Blocked(f"network_error:{type(ex).__name__}")
             e["origin_status"], e["http_status"], e["final_url"] = "observed", status, url
