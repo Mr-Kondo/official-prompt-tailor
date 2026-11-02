@@ -22,6 +22,8 @@ tests/   evals/prompt-tailor-cases.jsonl   outputs/(Git 管理外)
 
 通常は、このREADMEから[インストール](docs/install.md)・[利用手順](docs/usage.md)・[利用先の選び方](docs/targets.md)へ進みます。製品の制約とログの詳細は仕様、`docs/history/` は過去の記録です。規則の更新や公開を行う開発者は[メンテナンス手順](docs/maintenance.md)を参照してください。
 
+スキル自体の更新では、[知見索引](knowledge/index.md)から関連するIssue・ADR・評価を参照し、変更前後の比較と採否理由を残します。WikiSkillの三層分離を限定的に取り入れたもので、知見は通常実行へ注入しません。更新管理への効果は未測定です。[運用と検査](docs/maintenance.md#知見を更新へつなぐ)
+
 ## インストール
 
 Git と Python 3.9 以上が必要です。Pythonの追加パッケージは不要です。

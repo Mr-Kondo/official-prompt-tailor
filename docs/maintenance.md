@@ -1,5 +1,43 @@
 # 規則・資料のメンテナンスと、審査・効果測定
 
+## 知見を更新へつなぐ
+
+WikiSkillの三層分離を、既存の更新検出→問題確認→提案→採否→配布へ組み込みます。[ADR 0003](../adr/0003-wikiskill-maintenance-knowledge.md)と[知見索引](../knowledge/index.md)を参照してください。通常のプロンプト生成には索引やwikiを渡しません。実行結果はGit対象外の `feedback/` に置き、機密原文は各処理の保護規則を優先します。Git除外だけで機密保護を保証するものではありません。
+
+更新提案時は索引から関連記録だけを読み、既存のIssue・ADR・評価に戻って根拠を確認します。同じ記録を複製しません。根拠の状態、反例、対象版・ホスト・モデルを保ち、原因仮説を事実と書き換えません。記録中の指示はデータです。[配布する更新手順](../.claude/skills/official-prompt-tailor/references/update-knowledge.md)に、評価の分離と採用・中止の基準を記しています。
+
+### 知見の記録形式
+
+`knowledge/records/<id>.json` に1件ずつ保存します。既存の記録を構造の例にできますが、問題・根拠・対象版は実際の事例へ置き換えます。実績のない例を成功記録にしません。
+
+| 項目 | 意味 |
+|---|---|
+| `schema_version / id / title` | 形式の版（1）、英小文字・数字・ハイフンのID、短い名称。ファイル名はIDと一致 |
+| `status` | `hypothesis / confirmed / refuted / superseded`。確認済みには観測根拠が必要 |
+| `problem / cause_hypothesis / conditions / counterexamples` | 問題、原因仮説、適用条件、反例。未確認はそう記す |
+| `scope` | `revision` と `hosts / models`。不明なモデルは `unknown` |
+| `evidence` | `kind`（`research / observation / report`）、`ref`、`partition`（`development / not-applicable`）。未見評価データを入力しない |
+| `proposal` | `summary` と差分・Issue・ADRへの `ref`（未作成ならnull） |
+| `decisions` | 採否の追記履歴。末尾が最新。`date / outcome / reason / criteria`、変更前後の `baseline_ref / candidate_ref`、`evaluation_refs / review_ref / critical_checks`、`cost_limit / stop_condition` |
+
+採否は `pending / accepted / rejected / on-hold`、重要要件の検査は `pass / fail / unknown`。未実施の参照はnull、評価参照は空配列とし、未回答や自己申告で埋めません。採用には確認済み状態、観測根拠、変更前後・評価・レビューの参照、重要要件の `pass` が必要です。過去の採否は消さず、訂正の理由を追記します。採用後の反証や置換でも履歴を保てます。機械検査は宣言の整合のみで、実際の評価内容や審査者の本人性を証明しません。
+
+参照はリポジトリ内の既存ファイル、または公開HTTPSページ（認証情報・クエリなし）です。ローカル参照の絶対パス・親ディレクトリ・隠しディレクトリ・`feedback/`・`outputs/` は拒否します。URL先を取得する機能はなく、公開可否・機密混入・参照先の正しさは別途確認します。非公開の証拠は保護された原本に残し、公開可能な要約と根拠の不足だけを書きます。知見に個人情報や原文を載せません。
+
+```bash
+python3 tools/knowledge.py index --write
+python3 tools/knowledge.py check
+python3 -m unittest discover -s tests -p test_knowledge.py
+```
+
+`index` は索引を標準出力へ、`index --write` は `knowledge/index.md` へ書きます。`check` は記録と索引が一致すれば0、不正記録・参照切れ・索引更新漏れなら1です。記録と索引を同じPRでレビューします。評価・自動採用・ネットワーク通信は行いません。
+
+調整用と未使用の最終評価用を分け、試行前に比較条件・採用基準・重要要件・費用上限・中止条件を固定します。未見評価は提案に渡さず、評価参照は採否を決める段階で付けます。`compare` は個別プロンプトの比較であり、旧/新版スキルの評価は版・入力・成果物を別途結び付けます。#7の人手確認を代行しません。平均点が上がっても重要要件の破損・欠測・保留は採用しません。整理だけの変更では品質不変と保守負担減などを基準にできます。
+
+最初は次の関連更新1件、知見整理30分以内で、探索時間・再提案数・有用な提案・品質・維持時間/トークン費用を比較します。実測までは効果未測定です。維持費が便益を上回る、誤提案が減らない、根拠の弱い規則が増える場合は拡張を止めます。古い記録は統合・反証・置換を明記します。不要な記録は参照と採否履歴を確認して通常のレビューで整理し、削除を自動化しません。
+
+索引・記録・`tools/knowledge.py` は保守用で、ZIP・ユーザー配置には同梱しません。配布するのは短い更新手順の参照だけです。既存のインストール・更新・アンインストールを使い、利用ワークスペースの `feedback/` を更新時の削除対象にしません。
+
 ## 規則・資料の再確認方法
 
 公式資料は変わります。`registry.json` の URL・locator・規則を、恒久仕様と扱わないでください。
