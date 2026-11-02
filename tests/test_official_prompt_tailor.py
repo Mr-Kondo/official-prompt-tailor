@@ -75,7 +75,7 @@ class Base(unittest.TestCase):
         cwd = os.getcwd()
         os.chdir(self.tmp)
         self.addCleanup(os.chdir, cwd)
-        self.clock, self.calls = Clock(), []
+        self.clock, self.calls, self.accepts = Clock(), [], []
         self.page, self.md = (FIX / "guide.html").read_bytes(), (FIX / "guide.md").read_bytes()
         self.responses = {A_URL: (200, HTML, self.page), API_URL: (200, HTML, self.page),
                           MD_URL: (200, {"content-type": "text/markdown"}, self.md)}
@@ -88,8 +88,9 @@ class Base(unittest.TestCase):
         self.set_registry()
 
     # ---- fakes / builders
-    def fake_get(self, url):
+    def fake_get(self, url, accept=None):
         self.calls.append(url)
+        self.accepts.append(accept)
         r = self.responses.get(url)
         if r is None:
             raise urllib.error.URLError("no route")
@@ -227,6 +228,13 @@ class Base(unittest.TestCase):
 
 # =========================================================== positive paths
 class TestPositive(Base):
+    def test_html_source_asks_for_html_and_markdown_source_for_any_type(self):
+        # 2026-11-02: ai.google.dev answered the any-type Accept with Markdown, which an html extraction blocks as unexpected_content_type
+        self.fetch(purpose="skill-instructions")
+        asked = dict(zip(self.calls, self.accepts))
+        self.assertEqual(asked[A_URL], ev.ACCEPT_HTML)
+        self.assertEqual(asked[MD_URL], ev.ACCEPT_ANY)
+
     def test_live_fetch_records_observed_acquisition(self):
         code, acq = self.fetch()
         self.assertEqual(code, 0)
