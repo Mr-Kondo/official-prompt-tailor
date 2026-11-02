@@ -4,6 +4,7 @@ description: プロンプトを利用先(ChatGPT・Codex・Claude・Gemini・Ant
 ---
 
 # official-prompt-tailor
+
 原文・目的・利用先を受け取り、必要な公式資料だけを取得して読み、用途に合うプロンプトと検証可能な根拠を返す。ChatGPT 等は生成プロンプトの**利用先**であり、このスキルを**動かす製品**(実行ホスト)とは別。
 
 詳細: 証拠契約 [references/evidence-contract.md](references/evidence-contract.md) / 審査基準 [references/review-rubric.md](references/review-rubric.md) / 規則と資料 [references/registry.json](references/registry.json) / 使い方と制約: リポジトリ直下の README.md。スキル自体の更新を依頼されたときだけ[更新時の知見の使い方](references/update-knowledge.md)を読む（通常のプロンプト最適化では読まない）。
