@@ -38,6 +38,10 @@ Antigravity系の既存パスはCLIの共通配置と異なる。Macではスキ
 
 実行記録は `feedback/`、最終結果とレビュー採否は本ADRとIssue #76へ追記する。
 
+- 変更前408件・変更後409件のunittest成功。文書整合検査成功。隔離環境のGitHub/main登録・既存13ファイルのバイト照合・変更なし更新が成功。旧tree hashを保持してマージ後の実更新を検証する。
+- Antigravity Gemini 4 Argon Mediumは個人利用枠の上限でレビュー未実施（失敗をレビュー済みと扱わない）。Claude Code Sonnet 5.5 Medium・plan modeでレビューを完了し、確認済み不具合なし。レビュー自身はテストを再実行していない。
+- 採用: VERSIONの形式・リリースノート存在検査、具体的な退避コマンド。非採用: インストーラのリンク拒否のためだけの追加テスト。`copy_state` がリンクを未認識とし、既存の更新拒否検査でその分岐を使う実装を確認でき、ロックを書き換えるコードもないため、文書表現を維持する。プロンプト品質の改善は未評価。
+
 ## 参考
 
 - [Skills CLI 1.7.6](https://github.com/vercel-labs/skills/tree/7a5e920bead4b1039a6d6df5d7e1163b7b09423a)

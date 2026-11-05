@@ -38,6 +38,19 @@ CLIのユーザー配置の本体は `~/.agents/skills/official-prompt-tailor/` 
 4. `npx skills list --global` と `npx skills update official-prompt-tailor --global` を実行し、登録・更新を確認します。配置されたファイルと取得元のスキルフォルダを照合し、`VERSION` を確認します。各製品では新しいセッションを開いてください。
 5. 既存のAntigravity用パスに互換リンクを置いた場合、そのリンクはCLI自身の管理外です。アンインストール時はCLIの `remove` 後にリンクだけを外します。退避を戻す場合も、ほかのスキルや変更されたロックをまとめて上書きしないでください。
 
+macOS・Linuxでの退避例です。最初に退避先を作り、**実在する配置の行だけ**を実行します。コピーに失敗した場合は移行を止めます。`XDG_STATE_HOME` を設定している場合、最後の行の取得元を実際のロックの場所へ置き換えます。プロジェクト配置もあれば、別名で退避してください。
+
+```sh
+backup_dir="$(mktemp -d "$HOME/official-prompt-tailor-backup.XXXXXX")"
+cp -pR "$HOME/.agents/skills/official-prompt-tailor" "$backup_dir/shared"
+cp -pR "$HOME/.claude/skills/official-prompt-tailor" "$backup_dir/claude-code"
+cp -pR "$HOME/.gemini/config/skills/official-prompt-tailor" "$backup_dir/antigravity"
+cp -pR "$HOME/.gemini/antigravity-cli/skills/official-prompt-tailor" "$backup_dir/antigravity-cli"
+cp -p "$HOME/.agents/.skill-lock.json" "$backup_dir/skill-lock.json"
+```
+
+Windowsではエクスプローラーなどで同じ対象を別のフォルダへコピーしてから登録します。上のシェル例はPowerShell用ではありません。
+
 CLIの一次資料: [導入と更新](https://github.com/vercel-labs/skills/tree/v1.7.6)、[更新処理](https://github.com/vercel-labs/skills/blob/7a5e920bead4b1039a6d6df5d7e1163b7b09423a/src/update.ts)、[配置処理](https://github.com/vercel-labs/skills/blob/7a5e920bead4b1039a6d6df5d7e1163b7b09423a/src/installer.ts)。
 
 ## Python インストーラで管理する
