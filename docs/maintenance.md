@@ -366,7 +366,7 @@ Issue #7 の実行前準備は [人手レビュー資料と計画候補](../eval
 ## リリース
 
 1. 変更をコミットします。
-2. `install.py` の `PLUGIN_VERSION` を上げ、`release-notes/vX.Y.Z.md` にリリースノートを書いて、コミットします。ノートは「変更点」「確認できていること」「確認できていないこと」の 3 節です。
+2. `install.py` の `PLUGIN_VERSION` と、配布用 `.claude/skills/official-prompt-tailor/VERSION` を同じ版へ上げ、`release-notes/vX.Y.Z.md` にリリースノートを書いて、コミットします。ノートは「変更点」「確認できていること」「確認できていないこと」の 3 節です。Skills CLIはスキルフォルダの変更を検出するので、VERSIONも配布物に含めます。
 3. タグ `vX.Y.Z` を付けて、`main` とタグを push します。
 4. `.github/workflows/release.yml` が、タグと `PLUGIN_VERSION` の一致を確かめ、テストを通し、`install.py --zip` で ZIP を作って、GitHub Release を公開します。ノートは、タグの `release-notes/vX.Y.Z.md` です。無ければ自動生成になります。
 
