@@ -2460,6 +2460,11 @@ class TestShippedEvals(unittest.TestCase):
 
 
 class TestSkillFiles(unittest.TestCase):
+    def test_installed_version_matches_release_version(self):
+        import runpy
+        version = (SKILL / "VERSION").read_text(encoding="utf-8").strip()
+        self.assertEqual(version, runpy.run_path(str(ROOT / "install.py"))["PLUGIN_VERSION"])
+
     def test_skill_md_frontmatter_and_links(self):
         import re
         text = (SKILL / "SKILL.md").read_text(encoding="utf-8")

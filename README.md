@@ -26,6 +26,24 @@ tests/   evals/prompt-tailor-cases.jsonl   outputs/(Git 管理外)
 
 ## インストール
 
+### Skills CLI で導入・更新する
+
+Node.js 22.20.0 以上・Git・Python 3.9 以上がある場合は、次の方法で **main の最新版**へ追従できます（Skills CLI 1.7.6 で確認）。初回だけ GitHub の取得元を登録します。**既存コピーがある場合は、先に[退避・移行手順](docs/install.md#既存コピーを-skills-cli-へ移行する)を確認してください。CLIは既存コピーを置換し、自動バックアップを作りません。**
+
+```sh
+npx skills add Mr-Kondo/official-prompt-tailor#main --skill official-prompt-tailor --global --agent claude-code codex antigravity antigravity-cli --yes
+```
+
+以後、このスキルだけを更新するには次を実行します。`npx skills update` でも更新できますが、他の登録済みスキルも対象になります。
+
+```sh
+npx skills update official-prompt-tailor --global
+```
+
+公開タグへの固定ではありません。配置先・プロジェクト配置・削除・Antigravityの既存配置との違いは [Skills CLI の詳細](docs/install.md#skills-cli-で管理する)を参照してください。既存の `install.py` から登録なしで更新できるようになるわけではありません。
+
+### Python インストーラで導入・更新する
+
 Git と Python 3.9 以上が必要です。Pythonの追加パッケージは不要です。
 
 Windows の例は **Windows PowerShell 5.1／PowerShell 7 用**です。コマンドプロンプト（cmd.exe）では実行しないでください。`python --version` で Python 3.9 以上が表示される環境を使います。`py -3` だけが使える場合は、例の `python` を `py -3` に置き換えてください。

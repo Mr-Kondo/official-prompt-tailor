@@ -1,5 +1,47 @@
 # インストール・更新・削除の詳細
 
+## Skills CLI で管理する
+
+Skills CLI は取得元とスキルフォルダのハッシュをロックファイルに記録し、変更がある場合に再配置します。`install.py` や手動コピーだけで導入したものは登録されません。CLI 1.7.6（Node.js 22.20.0以上）で確認した手順です。Gitと、スキルの実行用にPython 3.9以上も必要です。
+
+ユーザー配置の初回登録:
+
+```sh
+npx skills add Mr-Kondo/official-prompt-tailor#main --skill official-prompt-tailor --global --agent claude-code codex antigravity antigravity-cli --yes
+```
+
+使う製品だけを `--agent` に残せます。更新・一覧・削除:
+
+```sh
+npx skills update official-prompt-tailor --global
+npx skills list --global
+npx skills remove official-prompt-tailor --global
+```
+
+`npx skills update` だけの場合は、対象スキルとユーザー／プロジェクト配置を対話で選ぶ場合があります。上の更新例はこのスキルのユーザー配置に限定します。`#main` は取得するブランチです。公開リリースのタグだけに追従する手順ではありません。タグを指定した導入は、そのタグに固定され、新タグへ自動で乗り換えません。
+
+### 配置先と管理の違い
+
+CLIのユーザー配置の本体は `~/.agents/skills/official-prompt-tailor/` です。Claude Code向けは通常、そこへのシンボリックリンクを `~/.claude/skills/` に作ります。Codex・Antigravity・Antigravity CLI はCLIの共通配置を使います。CLIの配置成功と、各製品が実際に読み込むことは別です。とくに既存インストーラのAntigravity用 `~/.gemini/config/skills/` と `~/.gemini/antigravity-cli/skills/` は別の場所なので、そのコピーはCLIで更新されません。既存パスを使う環境では、退避後、そのスキルのパスだけを共通配置へのリンクにするか、従来のインストーラを継続してください。
+
+`--copy` を付けるとリンクではなくコピーします。更新時の製品選択は、その時に検出した環境から再決定されるので、初回に指定した全製品への再配置を常に保証するものではありません。更新後は `list` と実際の配置を確認します。
+
+プロジェクト配置は、導入先プロジェクトのルートで初回登録から `--global` を外し、更新時に `--project` を指定します。`skills-lock.json` をそのプロジェクトで管理します。**この配布元リポジトリ自身でプロジェクト登録しないでください。配布用 `.claude/skills/official-prompt-tailor/` と衝突します。**
+
+ユーザー配置のロックファイルは通常 `~/.agents/.skill-lock.json`（`XDG_STATE_HOME` 設定時はその下の `skills/.skill-lock.json`）です。CLIに生成・更新させ、手書きで登録しません。Skills CLI管理へ移した配置を `install.py --update` で重ねて更新しないでください。既存インストーラは管理ロックを更新せず、リンク先の更新も拒否します。プラグイン・ZIPは引き続き既存インストーラを使います。
+
+### 既存コピーを Skills CLI へ移行する
+
+1. 使っている配置先と、既存のロックファイルを確認します。上記の共通配置・Claude Code配置・Antigravityの既存パスに加え、プロジェクト配置や独自のパスも確認します。
+2. 移行するスキルのコピーとロックファイルを別の場所へ退避します。ローカル変更があれば、取得元と比較して保持します。退避せずに `skills add --yes` を実行しないでください。CLIの置換には、`install.py` と同じ自動退避・復元機構はありません。
+3. 上のGitHub取得元から初回登録します。ローカルパスからの登録では、GitHubの更新元を正しく記録できません。
+4. `npx skills list --global` と `npx skills update official-prompt-tailor --global` を実行し、登録・更新を確認します。配置されたファイルと取得元のスキルフォルダを照合し、`VERSION` を確認します。各製品では新しいセッションを開いてください。
+5. 既存のAntigravity用パスに互換リンクを置いた場合、そのリンクはCLI自身の管理外です。アンインストール時はCLIの `remove` 後にリンクだけを外します。退避を戻す場合も、ほかのスキルや変更されたロックをまとめて上書きしないでください。
+
+CLIの一次資料: [導入と更新](https://github.com/vercel-labs/skills/tree/v1.7.6)、[更新処理](https://github.com/vercel-labs/skills/blob/7a5e920bead4b1039a6d6df5d7e1163b7b09423a/src/update.ts)、[配置処理](https://github.com/vercel-labs/skills/blob/7a5e920bead4b1039a6d6df5d7e1163b7b09423a/src/installer.ts)。
+
+## Python インストーラで管理する
+
 初めてユーザー配置で導入する場合は、[READMEのコピー用コマンド](../README.md#インストール)(Claude Code 用)か、下の「製品別のコピー用コマンド」を使ってください。ここでは、既存の配置先を使う更新、各オプション、失敗時の確認方法を説明します。
 
 ## 製品別のコピー用コマンド
