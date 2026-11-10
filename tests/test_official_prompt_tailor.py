@@ -2203,10 +2203,10 @@ class TestSourcesPlan(unittest.TestCase):
         status = {g["source_id"]: g["status"] for g in rep["model"]["guides"]}
         chosen = {"claude-prompting-opus-5-5", "claude-model-prompting"}  # the model's guide, and the general guide whose only rule names the model
         self.assertEqual({sid for sid, s in status.items() if s == "selected"}, chosen)
-        self.assertEqual(({s for sid, s in status.items() if sid not in chosen}, len(status) - len(chosen)), ({"skipped"}, 7))
+        self.assertEqual(({s for sid, s in status.items() if sid not in chosen}, len(status) - len(chosen)), ({"skipped"}, 8))
         self.assertEqual({g["reason"] for g in rep["model"]["guides"] if g["status"] == "skipped"}, {"model_mismatch"})
         self.assertTrue(chosen <= {x["source_id"] for x in rep["selected"]})
-        self.assertEqual(rep["model"]["model_specific_sources"], 9)
+        self.assertEqual(rep["model"]["model_specific_sources"], 10)
 
     def test_without_a_model_or_the_api_surface_no_guide_is_chosen_and_the_reason_says_which(self):
         no_model = self.plan(model="unknown")

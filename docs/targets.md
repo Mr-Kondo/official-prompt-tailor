@@ -40,7 +40,7 @@
 |---|---|---|---|
 | ChatGPT Chat | `chatgpt` | なし | `one-shot`: `openai-tasks-memory`、`openai-prompting`<br>`persistent-instructions`: `openai-personalize`<br>`skill-instructions`: `openai-skills-plugins`<br>`api`(`one-shot`・`agent-instruction`): `openai-api-prompting` |
 | ChatGPT Work | `chatgpt-work` | なし | `one-shot`: `openai-tasks-memory`、`openai-prompting`、`openai-work`<br>`persistent-instructions`: `openai-personalize`<br>`skill-instructions`: `openai-skills-plugins`<br>`api`(`one-shot`・`agent-instruction`): `openai-api-prompting` |
-| Codex | `codex` | なし | `one-shot`: `openai-best-practices`、`openai-prompting`<br>`persistent-instructions`: `openai-agents-md`、`openai-personalize`、`openai-best-practices`<br>`skill-instructions`: `openai-skills`、`openai-skills-plugins`、`openai-best-practices`<br>`api`(`one-shot`・`agent-instruction`): `openai-api-prompting` |
+| Codex | `codex` | なし | `one-shot`: `openai-best-practices`、`openai-prompting`、`openai-gpt-6-prompting`<br>`persistent-instructions`: `openai-agents-md`、`openai-personalize`、`openai-best-practices`、`openai-gpt-6-prompting`<br>`skill-instructions`: `openai-skills`、`openai-skills-plugins`、`openai-best-practices`、`openai-gpt-6-prompting`<br>`agent-instruction`: `openai-gpt-6-prompting`<br>`api`(`one-shot`・`agent-instruction`): `openai-api-prompting` |
 <!-- generated:routing-openai end -->
 
 ### Anthropic
@@ -76,7 +76,7 @@
 |---|---|---|---|---|
 | ChatGPT Chat | 4 | 1 | 2 | 資料なし |
 | ChatGPT Work | 5 | 1 | 2 | 資料なし |
-| Codex | 5 | 4 | 5 | 資料なし |
+| Codex | 7 | 9 | 6 | 5 |
 | Claude チャット | 7 | 1 | 6 | 資料なし |
 | Claude Cowork | 6 | 2 | 6 | 資料なし |
 | Claude Code | 7 | 4 | 8 | 1 |
@@ -101,13 +101,14 @@
 | Antigravity | `antigravity-sdk-templated-instructions` | `agent-instruction` |
 | Claude チャット・Claude Cowork・Claude Code | モデルを限定した規則(下記) | 規則による |
 
-モデルを限定した規則は 33 件です。`model_id` が規則の `models` に含まれるときだけ使えます。`target_surface` は問いません。他のモデルと `unknown` では、使われません。モデルを限定した資料(モデル別ガイド)も、同じ条件でだけ取得されます。33 件はすべて、指示の書き方の規則で、前提で原文の内容を確かめます。
+モデルを限定した規則は 38 件です。`model_id` が規則の `models` に含まれるときだけ使えます。`target_surface` は問いません。他のモデルと `unknown` では、使われません。モデルを限定した資料(モデル別ガイド)も、同じ条件でだけ取得されます。33 件はすべて、指示の書き方の規則で、前提で原文の内容を確かめます。
 
 <!-- generated:model-guides begin (python3 tools/maintain.py docs --write) -->
 | `model_id` | 取得される、モデル限定の資料 | 使える規則 |
 |---|---|---|
 | `claude-fable-5` | `claude-prompting-fable-5` | 4 件 |
 | `claude-fable-5-1` | `claude-model-prompting`、`claude-prompting-fable-5-1` | 5 件 |
+| `claude-fable-5-2` | `claude-model-prompting`、`claude-prompting-fable-5-2` | 6 件 |
 | `claude-haiku-5-5` | `claude-model-prompting`、`claude-prompting-haiku-5-5` | 4 件 |
 | `claude-opus-4-8` | `claude-prompting-opus-4-8` | 4 件 |
 | `claude-opus-5` | `claude-prompting-opus-5` | 4 件 |
