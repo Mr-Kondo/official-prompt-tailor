@@ -36,7 +36,7 @@ python3 -m unittest discover -s tests -p test_knowledge.py
 
 最初は次の関連更新1件、知見整理30分以内で、探索時間・再提案数・有用な提案・品質・維持時間/トークン費用を比較します。実測までは効果未測定です。維持費が便益を上回る、誤提案が減らない、根拠の弱い規則が増える場合は拡張を止めます。古い記録は統合・反証・置換を明記します。不要な記録は参照と採否履歴を確認して通常のレビューで整理し、削除を自動化しません。
 
-索引・記録・`tools/knowledge.py` は保守用で、ZIP・ユーザー配置には同梱しません。配布するのは短い更新手順の参照だけです。既存のインストール・更新・アンインストールを使い、利用ワークスペースの `feedback/` を更新時の削除対象にしません。
+索引・記録・`tools/knowledge.py` は保守用で、Skills CLI が配るスキルフォルダには同梱しません。配布するのは短い更新手順の参照だけです。Skills CLI の導入・更新・削除を使い、利用ワークスペースの `feedback/` を更新時の削除対象にしません。
 
 ## 規則・資料の再確認方法
 
@@ -292,7 +292,7 @@ python3 tools/maintain.py alternates --source <source_id> --url <別形式のURL
 - `INCOMPLETE`(取得できない資料や一覧がある)は、実行の Summary に出るだけで、Issue にはなりません。通信エラーは、再実行で解消することがあります。
 - 再審査(または既読化)が済んだら、Issue を閉じます。閉じた Issue は開き直しません。次の週にまだ残っていれば、新しい Issue を立てます。
 
-`.github/workflows/test.yml` は、push と pull request で、Ubuntu は Python 3.9〜3.15、macOS と Windows は 3.9 と 3.14 のテストを実行します。どの組み合わせが失敗しても、workflow は失敗になります。 Windows向けには別に、READMEとdocs/install.mdのPowerShellコードブロックを抽出して、Windows PowerShell 5.1とPowerShell 7で実行します。`py` がない環境での実行、空白・日本語を含むパス、導入・更新・再実行、Git失敗時の停止を、一時ホームと実Git・実インストーラーで検証します。
+`.github/workflows/test.yml` は、push と pull request で、Ubuntu は Python 3.9〜3.15、macOS と Windows は 3.9 と 3.14 のテストを実行します。どの組み合わせが失敗しても、workflow は失敗になります。 Windows向けには別に、docs/feedback.mdのPowerShellコードブロックを抽出して、Windows PowerShell 5.1とPowerShell 7で実行します。空白・日本語を含むパスでの作成、上書きの拒否、書き出しを、実Gitで検証します。
 
 3 つの workflow の Ubuntu は、`ubuntu-24.04` に固定しています。`ubuntu-latest` が Ubuntu 26 へ移り始めるのが 2026-10-19 で、`watch.yml` の定期実行と同じ日だからです(`test.yml` には、Python 3.9 のビルドが Ubuntu 26.04 にない、という理由もあります)。外すのは、`ubuntu-latest` で手動実行(`watch.yml`)が通ったあとです。
 
@@ -366,26 +366,12 @@ Issue #7 の実行前準備は [人手レビュー資料と計画候補](../eval
 ## リリース
 
 1. 変更をコミットします。
-2. `install.py` の `PLUGIN_VERSION` と、配布用 `.claude/skills/official-prompt-tailor/VERSION` を同じ版へ上げ、`release-notes/vX.Y.Z.md` にリリースノートを書いて、コミットします。ノートは「変更点」「確認できていること」「確認できていないこと」の 3 節です。Skills CLIはスキルフォルダの変更を検出するので、VERSIONも配布物に含めます。
+2. 配布用 `.claude/skills/official-prompt-tailor/VERSION` を上げ、`release-notes/vX.Y.Z.md` にリリースノートを書いて、コミットします。ノートは「変更点」「確認できていること」「確認できていないこと」の 3 節です。Skills CLIはスキルフォルダの変更を検出するので、VERSIONも配布物に含めます。
 3. タグ `vX.Y.Z` を付けて、`main` とタグを push します。
-4. `.github/workflows/release.yml` が、タグと `PLUGIN_VERSION` の一致を確かめ、テストを通し、`install.py --zip` で ZIP を作って、GitHub Release を公開します。ノートは、タグの `release-notes/vX.Y.Z.md` です。無ければ自動生成になります。
+4. `.github/workflows/release.yml` が、タグと `VERSION` の一致を確かめ、テストを通して、GitHub Release を公開します。配布物の ZIP は付けません。利用者は Skills CLI で `main` から取得します。ノートは、タグの `release-notes/vX.Y.Z.md` です。無ければ自動生成になります。
 
-手元から公開するときは、`install.py --zip dist` で ZIP を作り、次を実行します。
-
-```bash
-gh release create vX.Y.Z dist/official-prompt-tailor.zip --title vX.Y.Z --notes-file release-notes/vX.Y.Z.md
-```
-
-### 公開した ZIP を確かめる
-
-ZIP は、同じファイルから、どの機械でも、いつ作っても同じバイト列になります(ファイルの並びを名前順にし、時刻・権限・作成元を固定して、圧縮しません)。そのため、タグから作り直した ZIP の sha256 を、公開された ZIP の `digest` と比べるだけで、ダウンロードせずに確かめられます。
+手元から公開するときは、次を実行します。
 
 ```bash
-git archive vX.Y.Z | tar -x -C <空のディレクトリ>
-mkdir <出力先> && python3 <空のディレクトリ>/install.py --zip <出力先>    # "sha256: …" の行を控える
-curl -s https://api.github.com/repos/Mr-Kondo/official-prompt-tailor/releases/tags/vX.Y.Z    # assets の digest が "sha256:…" で一致する
+gh release create vX.Y.Z --title vX.Y.Z --notes-file release-notes/vX.Y.Z.md
 ```
-
-- `install.py --zip` は、最後に `sha256:` を出すので、`release.yml` のログにも残ります。`test.yml` も、コミットごとに同じ ZIP を作って `sha256:` を出します。同じコミットなら、[test.yml](../.github/workflows/test.yml) の全ジョブで同じ値になります。
-- この方法で確かめられるのは、この変更を入れた後のリリースからです。それ以前の ZIP は、更新日時と圧縮が入っているため、作り直しても一致しません。
-- 一致しないときは、ZIP の中身(名前・サイズ・内容)を `unzip -l` と `diff -r` で比べます。ファイルの改行が CRLF になっていると一致しません(`.gitattributes` が LF に固定しているので、通常は起きません)。

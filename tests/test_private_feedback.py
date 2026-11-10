@@ -7,7 +7,6 @@ import sys
 import tempfile
 import unittest
 import uuid
-import zipfile
 from pathlib import Path
 from contextlib import redirect_stderr
 
@@ -222,37 +221,6 @@ class PrivateFeedbackTests(unittest.TestCase):
                              env=dict(os.environ, PYTHONIOENCODING="ascii:strict"))
         self.assertEqual(run.returncode, 0, run.stderr)
         self.assertEqual(json.loads(output.read_bytes())["origin"], "artificial_test")
-
-    def test_three_product_lifecycles_preserve_workspace_reports_and_ship_tool(self):
-        for target, prefix in (("claude-code", ".claude"), ("codex", ".agents"), ("antigravity", ".agents")):
-            with self.subTest(target=target):
-                project = self.folder / target
-                project.mkdir()
-                saved_report = project / "report.json"
-                saved_report.write_text("keep")
-                base = [sys.executable, "-B", str(ROOT / "install.py"), "--target", target, "--project", str(project)]
-                installed = project / prefix / "skills/official-prompt-tailor"
-                for options in ([], ["--update"], ["--uninstall"]):
-                    if options == ["--update"]:
-                        (installed / "scripts/private_feedback.py").write_text("# old copy\n")
-                    run = subprocess.run(base + options, capture_output=True, text=True, encoding="utf-8")
-                    self.assertEqual(run.returncode, 0, run.stderr)
-                    self.assertEqual(saved_report.read_text(), "keep")
-                    if options != ["--uninstall"]:
-                        self.assertEqual((installed / "scripts/private_feedback.py").read_bytes(), SCRIPT.read_bytes())
-                        self.assertTrue((installed / "references/private-feedback.md").is_file())
-                    else:
-                        self.assertFalse(installed.exists())
-
-    def test_release_zip_contains_tool_and_contract_but_no_reports(self):
-        run = subprocess.run([sys.executable, "-B", str(ROOT / "install.py"), "--zip", str(self.folder)],
-                             capture_output=True, text=True, encoding="utf-8")
-        self.assertEqual(run.returncode, 0, run.stderr)
-        with zipfile.ZipFile(self.folder / "official-prompt-tailor.zip") as archive:
-            self.assertIsNone(archive.testzip())
-            self.assertEqual(archive.read("official-prompt-tailor/scripts/private_feedback.py"), SCRIPT.read_bytes())
-            self.assertIn("official-prompt-tailor/references/private-feedback.md", archive.namelist())
-            self.assertFalse(any("verification/" in name or "report.json" in name for name in archive.namelist()))
 
 
 if __name__ == "__main__":

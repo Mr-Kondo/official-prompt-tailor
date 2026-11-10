@@ -40,58 +40,15 @@ npx skills add Mr-Kondo/official-prompt-tailor --skill official-prompt-tailor --
 npx skills update official-prompt-tailor --global
 ```
 
-公開タグへの固定ではありません。配置先・プロジェクト配置・削除・Antigravityの既存配置との違いは [Skills CLI の詳細](docs/install.md#skills-cli-で管理する)を参照してください。既存の `install.py` から登録なしで更新できるようになるわけではありません。
-
-### Python インストーラで導入・更新する
-
-Git と Python 3.9 以上が必要です。Pythonの追加パッケージは不要です。
-
-Windows の例は **Windows PowerShell 5.1／PowerShell 7 用**です。コマンドプロンプト（cmd.exe）では実行しないでください。`python --version` で Python 3.9 以上が表示される環境を使います。`py -3` だけが使える場合は、例の `python` を `py -3` に置き換えてください。
-
-以下は、全プロジェクトで使う **ユーザー配置** の手順です。既に別の場所へ clone している場合や、`--project` で導入した場合は、[既存の場所・配置先を使う更新手順](docs/install.md#既存の場所配置先を使って更新する)を参照してください。配置方法を変えると、既存コピーの更新ではなく、別の場所への導入になります。
-
-### 1. 初回だけソースを取得する
-
-次のコマンドは macOS・Linux・Windows PowerShell 共通です。ホームディレクトリの `official-prompt-tailor` に、このリポジトリの `main` を取得します。
-
-```sh
-git clone --branch main https://github.com/Mr-Kondo/official-prompt-tailor.git "$HOME/official-prompt-tailor"
-```
-
-この手順で取得済みなら、clone は繰り返さず、次へ進みます。clone に失敗した場合は、原因を確認してから進めてください。
-
-### 2. コマンドを実行する
-
-**使う OS のブロックを1つ選び、そのままコピーして実行してください。** 以下は Claude Code 用です。Codex・Antigravity アプリ・IDE・Antigravity CLI は `--target` だけが違うので、[製品別のコピー用コマンド](docs/install.md#製品別のコピー用コマンド)を使います。現在の作業ディレクトリには依存しません。初回導入と更新で、同じコマンドを使えます。PowerShellでは `& {` から最後の `}` まで、ブロック全体をコピーします。
-
-最初の `git pull --ff-only` が `main` の最新版を取得し、成功した場合だけ `install.py --update` が配置先を更新します。これは公開タグへの固定ではなく、`main` に追従する手順です。`--update` だけでは最新版をダウンロードしません。
-
-macOS・Linux:
-
-```sh
-git -C "$HOME/official-prompt-tailor" pull --ff-only &&
-python3 "$HOME/official-prompt-tailor/install.py" --target claude-code --user --update
-```
-
-Windows PowerShell:
-
-```text powershell
-& {
-    $d = "$HOME/official-prompt-tailor"
-    git -C $d pull --ff-only
-    if (-not $? -or $LASTEXITCODE -ne 0) { throw "Git update failed; installation stopped." }
-    python -X utf8 "$d/install.py" --target claude-code --user --update
-    if (-not $? -or $LASTEXITCODE -ne 0) { throw "Skill update failed." }
-}
-```
+公開タグへの固定ではありません。配置先・プロジェクト配置・削除・Antigravityの既存配置との違いは [Skills CLI の詳細](docs/install.md#skills-cli-で管理する)を参照してください。v0.9.3 までの `install.py`（v0.10.0 で廃止）や手動コピーで入れた既存コピーは Skills CLI に登録されていません。[移行手順](docs/install.md#既存コピーを-skills-cli-へ移行する)で登録し直してください。
 
 ### 実行後の確認
 
-- 未導入ならインストールし、同じ内容なら `up to date` と表示して何もしません。差替え時は旧版を `.bak-<日時>` へ退避します。このスキルと確認できない既存コピーは更新しません。
-- 設定・hook・権限は変更しません。利用する製品で新しいセッションを開き、下の「動かせる製品」にある方法で呼び出してください。
+- `npx skills list --global` で登録を確認できます。更新後は、配置された `VERSION` が取得元と一致するかを確認してください。
+- 利用する製品で新しいセッションを開き、下の「動かせる製品」にある方法で呼び出してください。
 - 実行結果は、スキルを使うワークスペースの `outputs/official-prompt-tailor/` に出ます。
 
-プロジェクトへの配置、ZIP・プラグインの作成、削除、更新に失敗した場合は [docs/install.md](docs/install.md) を参照してください。
+プロジェクトへの配置、削除、移行、更新に失敗した場合は [docs/install.md](docs/install.md) を参照してください。
 
 ## 動かせる製品
 
@@ -99,11 +56,11 @@ Windows PowerShell:
 
 | 動かす製品 | 配置 | 呼び出し | 実機確認 |
 |---|---|---|---|
-| Claude Code | `install.py`(既定) | `/official-prompt-tailor` | 済み |
-| Codex | `--target codex` | `$official-prompt-tailor` か `/skills` | CLI。Desktop は別途未確認 |
-| Antigravity | `--target antigravity` / `antigravity-cli` | `/official-prompt-tailor` | CLI。アプリは限定確認 |
-| Claude Cowork | `--zip` で ZIP を作って、アップロード | 自動または指定 | 未確認 |
-| ChatGPT Work | `--plugin` で互換形式を作り、[公式の導入手順](docs/install.md#--pluginchatgpt-work--codex)へ | `@` で選択 | 未確認 |
+| Claude Code | `--agent claude-code` | `/official-prompt-tailor` | 済み |
+| Codex | `--agent codex` | `$official-prompt-tailor` か `/skills` | CLI。Desktop は別途未確認 |
+| Antigravity | `--agent antigravity` / `antigravity-cli` | `/official-prompt-tailor` | CLI。アプリは限定確認 |
+| Claude Cowork | 配置手段なし(v0.9.3 までの ZIP 出力は廃止) | 自動または指定 | 未確認 |
+| ChatGPT Work | 配置手段なし(v0.9.3 までのプラグイン出力は廃止) | `@` で選択 | 未確認 |
 
 読取り観測は Claude Code・Codex・Antigravity の対応ログで行います。対応する版・形式には制限があり、ログがない場合や未対応の製品では、参照検証は `INCOMPLETE` になります。[製品ごとの制約](docs/products.md)と[ログの仕様](docs/log-adapters.md)を参照してください。
 
