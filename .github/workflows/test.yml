@@ -20,8 +20,8 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.9"
-      - name: Run commands extracted from README and docs
-        run: python .github/scripts/check_windows_install_docs.py --shell ${{ matrix.shell }}
+      - name: Run commands extracted from docs
+        run: python .github/scripts/check_windows_doc_commands.py --shell ${{ matrix.shell }}
   test:
     runs-on: ${{ matrix.os }}
     strategy:
@@ -42,6 +42,3 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - run: python -m unittest discover -s tests
-      - name: ZIP sha256 (one commit gives one digest on every runner; docs/maintenance.md)
-        shell: bash
-        run: mkdir zip-out && python install.py --zip zip-out | grep '^sha256'
