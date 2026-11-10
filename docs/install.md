@@ -7,7 +7,7 @@ Skills CLI は取得元とスキルフォルダのハッシュをロックファ
 ユーザー配置の初回登録:
 
 ```sh
-npx skills add Mr-Kondo/official-prompt-tailor#main --skill official-prompt-tailor --global --agent claude-code codex antigravity antigravity-cli --yes
+npx skills add Mr-Kondo/official-prompt-tailor --skill official-prompt-tailor --global --agent claude-code codex antigravity antigravity-cli --yes
 ```
 
 使う製品だけを `--agent` に残せます。更新・一覧・削除:
@@ -18,7 +18,7 @@ npx skills list --global
 npx skills remove official-prompt-tailor --global
 ```
 
-`npx skills update` だけの場合は、対象スキルとユーザー／プロジェクト配置を対話で選ぶ場合があります。上の更新例はこのスキルのユーザー配置に限定します。`#main` は取得するブランチです。公開リリースのタグだけに追従する手順ではありません。タグを指定した導入は、そのタグに固定され、新タグへ自動で乗り換えません。
+`npx skills update` だけの場合は、対象スキルとユーザー／プロジェクト配置を対話で選ぶ場合があります。上の更新例はこのスキルのユーザー配置に限定します。ブランチを省くと既定ブランチ（main）を取得します。公開リリースのタグだけに追従する手順ではありません。タグを指定した導入は、そのタグに固定され、新タグへ自動で乗り換えません。
 
 ### 配置先と管理の違い
 
